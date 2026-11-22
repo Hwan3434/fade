@@ -25,11 +25,11 @@
 
 ## 怎么做的
 
-- 守护仓库的工作(静态检查、hook、lint、测试、验证手段)由那个仓库负责。fade 只承载在其之上主控(lead)和工作者(worker)的工作方式。
+- 守护仓库的工作（静态检查、hook、lint、测试、验证手段）由那个仓库负责。fade 只承载在其之上主控（lead）和工作者（worker）的工作方式。
 - 即便是能用文字约束的规则，只要能用检查拦住，就从技能里拿掉，交给仓库的检查。技能里只留下流程。
 - 所以它只在检查齐全的仓库里才能好好运转。无人值守运行的 `nonstop` 只靠拒绝仓库要求确认的操作来停下；在没有这些检查的仓库里，没有任何东西能拦住那些操作。
-- 每个仓库各不相同的值(base 分支、合并方式、验证方法)不写进来。在那个仓库里运行的模型会读仓库自己判断。
-- 技能的每一行都写明它要防止的失败。只有在真实会话中确认出现失败时才加行；描述模型本来就会做的事的行则删掉。
+- 每个仓库各不相同的值（base 分支、合并方式、验证方法）不写进来。在那个仓库里运行的模型会读仓库自己判断。
+- 只有在真实会话中确认出现了某一行要防止的失败，才会加上那一行。描述模型本来就会做的事的行则删掉。
 - 只收录在多个仓库中以同样正文使用的内容，并且只以 Claude Code 为准来写。
 
 ## 往哪里去
@@ -40,11 +40,11 @@
 
 ## 技能
 
-- `job`: 工作的最小单位。接收一份计划书，从计划、实现、验证、提交、PR 到附上证据的报告一气做完。
-- `grill`: 在执行前把剩下的决定逐一追问到底，每个问题都带编号和推荐答案。
-- `dispatch`: 把代码改动以 `job` 计划书的形式交给在仓库 worktree 中运行的新会话(工作者)，并将工作者附上的证据与完成标准对照。仅限 Claude Desktop。
-- `debug`: 先做出一条会失败的命令，再按固定顺序诊断 bug。
-- `nonstop`: 无人值守地把任务列表跑到底，每个任务都以 `job` 执行。只在用户亲自调用时使用。
+- `job`：工作的最小单位。接收一份计划书，从计划、实现、验证、提交、PR 到附上证据的报告一气做完。
+- `grill`：在执行前把剩下的决定逐一追问到底，每个问题都带编号和推荐答案。
+- `dispatch`：把代码改动以 `job` 计划书的形式交给在仓库 worktree 中运行的新会话（工作者），并将工作者附上的证据与完成标准对照。仅限 Claude Desktop。
+- `debug`：先做出一条会失败的命令，再按固定顺序诊断 bug。
+- `nonstop`：无人值守地把任务列表跑到底，每个任务都以 `job` 执行。只在用户亲自调用时使用。
 
 ## 安装
 
@@ -64,9 +64,9 @@ Claude 云端会话不会读取插件。要在云端使用的仓库，把技能�
 
 ## 参考
 
-- [mattpocock/skills](https://github.com/mattpocock/skills): `grill` 源自 `grilling`，`debug` 源自 `diagnosing-bugs`。
-- [cursor/plugins](https://github.com/cursor/plugins) 中的 `pstack`: 不附带检查、只以一个工具为准来写的方式。
-- [poteto/verification-skill-example](https://github.com/poteto/verification-skill-example): 验证技能的范例。
+- [mattpocock/skills](https://github.com/mattpocock/skills)：`grill` 源自 `grilling`，`debug` 源自 `diagnosing-bugs`。
+- [cursor/plugins](https://github.com/cursor/plugins) 中的 `pstack`：不附带检查、只以一个工具为准来写的方式。
+- [poteto/verification-skill-example](https://github.com/poteto/verification-skill-example)：验证技能的范例。
 
 ## 许可证
 

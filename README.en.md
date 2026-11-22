@@ -29,7 +29,7 @@ The goal is to delete lines as models get smarter until none are left, hence the
 - Even a rule that prose could enforce is taken out of the skills when a check can enforce it, and sent to the repo's checks instead. What stays in the skills is process alone.
 - So it only works well in repos that have those checks. `nonstop`, which runs with no one watching, stops only by refusing actions the repo asks to confirm; in a repo without such checks, nothing stops those actions.
 - Values that differ per repo (base branch, merge method, how to verify) are not written down. The model running in that repo reads the repo and decides.
-- Each line of a skill records the failure it prevents. Lines are added only when a failure is seen in a real session, and lines describing what the model already does are deleted.
+- A line is added only when the failure it prevents has been seen in a real session. Lines describing what the model already does are deleted.
 - Only what is used with the same text across many repos goes in, and it is written for Claude Code alone.
 
 ## Where it is going
