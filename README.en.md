@@ -106,7 +106,7 @@ For each line of the skills, this records the failure that line prevents. Only r
 | `dispatch` | If there is no goal or decisions remain, settle them with `grill` before starting | | |
 | `dispatch` | If the request spans several repos, judge only feasibility, and write a separate contract per repo | | |
 | `dispatch` | Detailed plans, design, and APIs between repos are decided by the worker in its own repo | | |
-| `dispatch` | Decide the done criteria and the run output to show before starting the worker | Without this line, deciding the done criteria before starting would happen only once or twice in ten tries (the user's estimate) | Contract |
+| `dispatch` | Decide the done criteria and the run output to show before starting the worker | The user's words: "Out of 10 tasks, it would do this maybe 1 or 2 times" | Contract |
 | `dispatch` | For a bug fix, include a reproduction test that fails before the fix | | |
 | `dispatch` | Put tickets, plans, and decisions into the prompt in full | | |
 | `dispatch` | Write what the user decided as a category as a category | | |
