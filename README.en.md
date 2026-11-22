@@ -28,7 +28,7 @@ The text removed from the skills, and the repo check that takes its place:
 | `dispatch` | Branch name format and choosing the base | A check on branch names, and the repo's `CLAUDE.md` |
 | `dispatch` | Merge command and merge method | A merge guard that enforces the merge method |
 | `dispatch` | Merge and delete only with approval that quotes the user's words | A hook that requires confirmation for merge and branch delete commands |
-| `job` | Never break the plan's prohibitions | A permission setting or hook that blocks the prohibited commands |
+| `dispatch` | Never break the contract's prohibitions | A permission setting or hook that blocks the prohibited commands |
 | `debug` | Per-repo ways to reproduce | A verification skill (`verify-<repo>`) |
 
 `nonstop` guards an unattended session only by refusing what the repo requires confirmation for. In a repo without the four checks above, nothing stops those actions.
@@ -64,6 +64,7 @@ Claude cloud sessions do not load plugins. For a repo used in the cloud, put a c
 | `dispatch` | Hands a code change, as a `job` plan, to a new session (a worker) running in a worktree of the target repo, relays its reports, and checks the evidence the worker attached against the done criteria. If the request spans several repos, starts a separate worker per repo. Works only in Claude Desktop | `/fade:dispatch`, or Claude when needed |
 | `debug` | Builds a failing command first, then diagnoses the bug in six steps | `/fade:debug`, or Claude when needed |
 | `nonstop` | Works through a task list to the end with nobody watching. Carries out each task with `job`. While tasks remain, hooks block ending the turn, the question tool, and permission prompts | `/fade:nonstop`, by the user directly |
+| `nonstop` | For each task, read the request and the repo to fill in a `job` plan; record the done criteria decided with `decide`, and record `hold` if it cannot be filled. The report goes in the PR body | | |
 
 If `nonstop` is invoked in plan mode, it stops at the plan approval prompt. To run unattended, invoke it in another permission mode.
 
@@ -126,6 +127,7 @@ For each line of the skills, this records the failure that line prevents. Only r
 | `dispatch` | If the request spans several repos, judge only feasibility, and write a separate plan per repo | | |
 | `dispatch` | Detailed plans, design, and APIs between repos are decided by the worker in its own repo | | |
 | `dispatch` | Fill in the plan before starting the worker | | |
+| `dispatch` | Read the plan format from `job`'s SKILL.md with Read; the lead does not invoke `job` with Skill | | |
 | `dispatch` | First check whether the same task is already running | | |
 | `dispatch` | `cwd` is the main checkout of the target repo | | |
 | `dispatch` | `use_worktree` is `true` | | |
