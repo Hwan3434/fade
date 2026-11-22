@@ -58,10 +58,6 @@ claude plugin install fade@fade
 
 Claude のクラウドセッションはプラグインを読み込みません。クラウドで使うリポジトリには、スキルフォルダのコピーを `.claude/skills/` に置き、`nonstop` の hook パスを `"${CLAUDE_PROJECT_DIR}"/.claude/skills/nonstop/nonstop.py` に書き換えます。
 
-## ひとりで管理している理由
-
-> 開くつもりはあるが、今は意味がないと判断した。
-
 ## 参考にしたもの
 
 - [mattpocock/skills](https://github.com/mattpocock/skills): `grill` は `grilling` から、`debug` は `diagnosing-bugs` から出発しました。

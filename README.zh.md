@@ -58,10 +58,6 @@ claude plugin install fade@fade
 
 Claude 云端会话不会读取插件。要在云端使用的仓库，把技能文件夹的副本放进 `.claude/skills/`，并把 `nonstop` 的 hook 路径改为 `"${CLAUDE_PROJECT_DIR}"/.claude/skills/nonstop/nonstop.py`。
 
-## 为什么独自维护
-
-> 有开放的打算，但判断现在没有意义。
-
 ## 参考
 
 - [mattpocock/skills](https://github.com/mattpocock/skills)：`grill` 源自 `grilling`，`debug` 源自 `diagnosing-bugs`。

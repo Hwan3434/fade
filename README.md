@@ -58,10 +58,6 @@ claude plugin install fade@fade
 
 Claude 클라우드 세션은 플러그인을 읽지 않는다. 클라우드에서 쓸 레포에는 스킬 폴더 사본을 `.claude/skills/` 에 넣고, `nonstop` 의 hook 경로를 `"${CLAUDE_PROJECT_DIR}"/.claude/skills/nonstop/nonstop.py` 로 고친다.
 
-## 혼자 관리하는 이유
-
-> 열어 둘 생각은 있지만 지금은 의미 없다고 판단했다.
-
 ## 참고한 곳
 
 - [mattpocock/skills](https://github.com/mattpocock/skills): `grill` 은 `grilling`, `debug` 는 `diagnosing-bugs` 에서 출발했다.

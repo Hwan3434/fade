@@ -58,10 +58,6 @@ claude plugin install fade@fade
 
 Claude cloud sessions do not load plugins. For a repo used in the cloud, put a copy of the skill folders in `.claude/skills/` and change the `nonstop` hook path to `"${CLAUDE_PROJECT_DIR}"/.claude/skills/nonstop/nonstop.py`.
 
-## Why I maintain it alone
-
-> I do intend to open it up, but I judged that it would not mean much right now.
-
 ## Credits
 
 - [mattpocock/skills](https://github.com/mattpocock/skills): `grill` started from `grilling`, and `debug` from `diagnosing-bugs`.
