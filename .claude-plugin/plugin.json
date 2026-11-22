@@ -1,0 +1,5 @@
+{
+  "name": "fade",
+  "description": "레포의 검사 위에서 리드·워커가 일하는 방식만 담은 Claude Code 스킬 모음",
+  "author": { "name": "jeonghwan lee" }
+}
