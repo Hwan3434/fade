@@ -42,7 +42,7 @@ The goal is to delete lines as models get smarter until none are left, hence the
 
 - `job`: the smallest unit of work. Takes one plan and carries it through planning, implementation, verification, commit, PR, and a report with evidence attached.
 - `grill`: asks about every decision left before execution, numbered and with a recommended answer, until none remain.
-- `dispatch`: hands a code change to a new session (a worker) running in the repo's worktree as a `job` plan, and checks the worker's evidence against the done criteria. Runs the worker as a Desktop session in Claude Desktop, and as `claude -p` inside a worktree in the terminal.
+- `dispatch`: hands a code change to a new session (a worker) running in the repo's worktree as a `job` plan, and checks the worker's evidence against the done criteria.
 - `debug`: starts by building one failing command, then diagnoses the bug in a fixed order.
 - `nonstop`: works through a task list to the end with no one watching, running each task as a `job`. Only for when the user invokes it directly.
 
