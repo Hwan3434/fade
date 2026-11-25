@@ -2,7 +2,7 @@
 
 [한국어](README.md) · [English](README.en.md) · [日本語](README.ja.md)
 
-一个只面向 Claude Code 的技能插件。它不是为了增加功能而做的，而是为了不断变少而做的。
+一套不依赖任何特定代理（agent）的技能。目前以 Claude Code 插件的形式发布。它不是为了增加功能而做的，而是为了不断变少而做的。
 目标是模型越聪明，就删掉越多的行，最终归零，所以叫 fade。
 
 ## 为什么做它
@@ -30,7 +30,7 @@
 - 所以它只在检查齐全的仓库里才能好好运转。无人值守运行的 `nonstop` 只靠拒绝仓库要求确认的操作来停下；在没有这些检查的仓库里，没有任何东西能拦住那些操作。
 - 每个仓库各不相同的值（base 分支、合并方式、验证方法）不写进来。在那个仓库里运行的模型会读仓库自己判断。
 - 只有在真实会话中确认出现了某一行要防止的失败，才会加上那一行。描述模型本来就会做的事的行则删掉。
-- 只收录在多个仓库中以同样正文使用的内容，并且只以 Claude Code 为准来写。
+- 只收录在多个仓库中以同样正文使用的内容。正文不写特定代理的工具或机制，只写要遵守的条件。如何满足这些条件，由使用方的环境决定。
 
 ## 往哪里去
 
@@ -56,12 +56,12 @@ claude plugin marketplace add Hwan3434/fade
 claude plugin install fade@fade
 ```
 
-Claude 云端会话不会读取插件。要在云端使用的仓库，把技能文件夹的副本放进 `.claude/skills/`，并把 `nonstop` 的 hook 路径改为 `"${CLAUDE_PROJECT_DIR}"/.claude/skills/nonstop/nonstop.py`。
+Claude 云端会话不会读取插件。要在云端使用的仓库，把技能文件夹的副本放进 `.claude/skills/`。
 
 ## 参考
 
 - [mattpocock/skills](https://github.com/mattpocock/skills)：`grill` 源自 `grilling`，`debug` 源自 `diagnosing-bugs`。
-- [cursor/plugins](https://github.com/cursor/plugins) 中的 `pstack`：不附带检查、只以一个工具为准来写的方式。
+- [cursor/plugins](https://github.com/cursor/plugins) 中的 `pstack`：不附带检查的方式。
 - [poteto/verification-skill-example](https://github.com/poteto/verification-skill-example)：验证技能的范例。
 
 ## 许可证

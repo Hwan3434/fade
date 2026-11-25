@@ -2,7 +2,7 @@
 
 [한국어](README.md) · [English](README.en.md) · [中文](README.zh.md)
 
-Claude Code 専用のスキルプラグインです。機能を増やすためではなく、縮んでいくために作ったツールです。
+特定のエージェントに依存しないスキル集です。今は Claude Code プラグインとして配布しています。機能を増やすためではなく、縮んでいくために作ったツールです。
 モデルが賢くなるほど行を消し、最後には 0 行になることを目指しているので、名前は fade です。
 
 ## なぜ作ったのか
@@ -30,7 +30,7 @@ Claude Code 専用のスキルプラグインです。機能を増やすため�
 - そのため、検査が揃ったリポジトリでしかうまく動きません。人のいないところで動く `nonstop` は、リポジトリが確認を求める操作を拒むことでしか止まらないので、検査のないリポジトリではその操作を止めるものがありません。
 - リポジトリごとに違う値（base ブランチ、マージ方式、検証方法）は書きません。そのリポジトリで動くモデルがリポジトリを読んで判断します。
 - 行を足すのは、その行が防ぐ失敗が実際のセッションで確認されたときだけです。モデルが元からやることを書いた行は消します。
-- 複数のリポジトリで同じ本文のまま使うものだけを入れ、Claude Code だけを基準に書きます。
+- 複数のリポジトリで同じ本文のまま使うものだけを入れます。本文には特定のエージェントのツールや仕組みを書かず、守る条件だけを書きます。条件をどう満たすかは使う側の環境が決めます。
 
 ## どこへ向かうのか
 
@@ -56,12 +56,12 @@ claude plugin marketplace add Hwan3434/fade
 claude plugin install fade@fade
 ```
 
-Claude のクラウドセッションはプラグインを読み込みません。クラウドで使うリポジトリには、スキルフォルダのコピーを `.claude/skills/` に置き、`nonstop` の hook パスを `"${CLAUDE_PROJECT_DIR}"/.claude/skills/nonstop/nonstop.py` に書き換えます。
+Claude のクラウドセッションはプラグインを読み込みません。クラウドで使うリポジトリには、スキルフォルダのコピーを `.claude/skills/` に置きます。
 
 ## 参考にしたもの
 
 - [mattpocock/skills](https://github.com/mattpocock/skills): `grill` は `grilling` から、`debug` は `diagnosing-bugs` から出発しました。
-- [cursor/plugins](https://github.com/cursor/plugins) の `pstack`: 検査を載せず、一つのツールを基準に書くやり方。
+- [cursor/plugins](https://github.com/cursor/plugins) の `pstack`: 検査を載せないやり方。
 - [poteto/verification-skill-example](https://github.com/poteto/verification-skill-example): 検証スキルのお手本。
 
 ## ライセンス

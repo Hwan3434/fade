@@ -2,7 +2,7 @@
 
 [English](README.en.md) · [日本語](README.ja.md) · [中文](README.zh.md)
 
-Claude Code 전용 스킬 플러그인이다. 기능을 늘리려고 만든 도구가 아니라, 줄어들려고 만든 도구다.
+에이전트를 가리지 않는 스킬 모음이다. 지금은 Claude Code 플러그인으로 배포한다. 기능을 늘리려고 만든 도구가 아니라, 줄어들려고 만든 도구다.
 모델이 똑똑해질수록 줄을 지워 결국 0줄이 되는 것이 목표라 이름이 fade 다.
 
 ## 왜 만들었나
@@ -30,7 +30,7 @@ Claude Code 전용 스킬 플러그인이다. 기능을 늘리려고 만든 도�
 - 그래서 검사가 갖춰진 레포에서만 제대로 돈다. 사람 없이 도는 `nonstop` 은 레포가 확인을 요구하는 일을 거부하는 것으로만 멈추므로, 검사가 없는 레포에서는 그 일을 막을 것이 없다.
 - 레포마다 다른 값(base 브랜치, 병합 방식, 검증 방법)은 적지 않는다. 그 레포에서 도는 모델이 레포를 읽고 판단한다.
 - 줄을 더하려면 그 줄이 막는 실패가 실제 세션에서 확인되어야 한다. 모델이 원래 하는 일을 적은 줄은 지운다.
-- 여러 레포에서 같은 본문으로 쓰는 것만 담고, Claude Code 하나만 기준으로 쓴다.
+- 여러 레포에서 같은 본문으로 쓰는 것만 담는다. 본문에는 특정 에이전트의 도구나 장치를 적지 않고 지킬 조건만 적는다. 조건을 어떻게 채울지는 쓰는 쪽의 환경이 정한다.
 
 ## 어디로 가나
 
@@ -56,12 +56,12 @@ claude plugin marketplace add Hwan3434/fade
 claude plugin install fade@fade
 ```
 
-Claude 클라우드 세션은 플러그인을 읽지 않는다. 클라우드에서 쓸 레포에는 스킬 폴더 사본을 `.claude/skills/` 에 넣고, `nonstop` 의 hook 경로를 `"${CLAUDE_PROJECT_DIR}"/.claude/skills/nonstop/nonstop.py` 로 고친다.
+Claude 클라우드 세션은 플러그인을 읽지 않는다. 클라우드에서 쓸 레포에는 스킬 폴더 사본을 `.claude/skills/` 에 넣는다.
 
 ## 참고한 곳
 
 - [mattpocock/skills](https://github.com/mattpocock/skills): `grill` 은 `grilling`, `debug` 는 `diagnosing-bugs` 에서 출발했다.
-- [cursor/plugins](https://github.com/cursor/plugins) 의 `pstack`: 검사를 싣지 않고 한 도구 기준으로 쓰는 방식.
+- [cursor/plugins](https://github.com/cursor/plugins) 의 `pstack`: 검사를 싣지 않는 방식.
 - [poteto/verification-skill-example](https://github.com/poteto/verification-skill-example): 검증 스킬의 본보기.
 
 ## 라이선스
