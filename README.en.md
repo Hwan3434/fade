@@ -2,7 +2,7 @@
 
 [한국어](README.md) · [日本語](README.ja.md) · [中文](README.zh.md)
 
-A skill plugin for Claude Code only. It was not built to gain features; it was built to shrink.
+A set of skills that does not depend on any one agent. It is currently distributed as a Claude Code plugin. It was not built to gain features; it was built to shrink.
 The goal is to delete lines as models get smarter until none are left, hence the name fade.
 
 ## Why it exists
@@ -30,7 +30,7 @@ The goal is to delete lines as models get smarter until none are left, hence the
 - So it only works well in repos that have those checks. `nonstop`, which runs with no one watching, stops only by refusing actions the repo asks to confirm; in a repo without such checks, nothing stops those actions.
 - Values that differ per repo (base branch, merge method, how to verify) are not written down. The model running in that repo reads the repo and decides.
 - A line is added only when the failure it prevents has been seen in a real session. Lines describing what the model already does are deleted.
-- Only what is used with the same text across many repos goes in, and it is written for Claude Code alone.
+- Only what is used with the same text across many repos goes in. The text names no agent-specific tools or mechanisms; it states only the conditions to meet. How to meet them is up to the environment that uses it.
 
 ## Where it is going
 
@@ -56,12 +56,12 @@ claude plugin marketplace add Hwan3434/fade
 claude plugin install fade@fade
 ```
 
-Claude cloud sessions do not load plugins. For a repo used in the cloud, put a copy of the skill folders in `.claude/skills/` and change the `nonstop` hook path to `"${CLAUDE_PROJECT_DIR}"/.claude/skills/nonstop/nonstop.py`.
+Claude cloud sessions do not load plugins. For a repo used in the cloud, put a copy of the skill folders in `.claude/skills/`.
 
 ## Credits
 
 - [mattpocock/skills](https://github.com/mattpocock/skills): `grill` started from `grilling`, and `debug` from `diagnosing-bugs`.
-- `pstack` in [cursor/plugins](https://github.com/cursor/plugins): the approach of shipping no checks and writing for a single tool.
+- `pstack` in [cursor/plugins](https://github.com/cursor/plugins): the approach of shipping no checks.
 - [poteto/verification-skill-example](https://github.com/poteto/verification-skill-example): the model for verification skills.
 
 ## License

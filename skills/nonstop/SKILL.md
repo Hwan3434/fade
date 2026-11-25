@@ -1,30 +1,15 @@
 ---
 name: nonstop
-description: 지켜보는 사람 없이 받은 작업 목록을 끝까지 돈다. 작업마다 PR 까지 올리고, 물어야 할 것은 보류로 적어 두고 다음 작업으로 간다. 남은 작업이 있는 동안 턴 종료·질문·권한 창을 hook 이 막는다. 사용자가 「/fade:nonstop」으로 직접 부를 때만 쓴다.
+description: 지켜보는 사람 없이 받은 작업 목록을 끝까지 돈다. 작업마다 PR 까지 올리고, 물어야 할 것은 보류로 적어 두고 다음 작업으로 간다. 사용자가 「/fade:nonstop」으로 직접 부를 때만 쓴다.
 disable-model-invocation: true
 model: opus
-allowed-tools: Bash(${CLAUDE_SKILL_DIR}/nonstop.py *)
-hooks:
-  Stop:
-    - hooks:
-        - type: command
-          command: '"${CLAUDE_PLUGIN_ROOT}"/skills/nonstop/nonstop.py hook'
-  PreToolUse:
-    - matcher: "AskUserQuestion"
-      hooks:
-        - type: command
-          command: '"${CLAUDE_PLUGIN_ROOT}"/skills/nonstop/nonstop.py hook'
-  PermissionRequest:
-    - hooks:
-        - type: command
-          command: '"${CLAUDE_PLUGIN_ROOT}"/skills/nonstop/nonstop.py hook'
 ---
 
 # nonstop
 
 지켜보는 사람이 없다. 받은 작업을 할 수 있는 데까지 끝내 놓는 것이 목적이다. 한 작업이 막혀도 나머지는 계속한다.
 
-작업 목록은 `${CLAUDE_SKILL_DIR}/nonstop.py` 로만 다룬다. 이 세션의 ID 는 `${CLAUDE_SESSION_ID}` 다. 아래 명령의 `<세션>` 자리에 넣는다.
+작업 목록은 이 스킬 폴더의 `nonstop.py` 로만 다룬다. 아래 명령의 `<세션>` 자리에는 이 대화를 가리키는 고유한 이름을 넣는다. 환경이 대화 ID 를 주면 그것을 쓴다.
 
 ## 순서
 
@@ -48,12 +33,12 @@ hooks:
 
 ## 레포가 확인을 요구하는 일
 
-레포가 확인을 요구하는 일은 이 스킬이 거부한다. 거부되면 `blocked` 로 적고 다음 작업으로 간다.
+레포가 사람의 확인을 요구하는 일은 하지 않는다. `blocked` 로 적고 다음 작업으로 간다.
 
 ## 묻는 대신 하는 것
 
 - 사용자가 눈으로 봐야 하거나 되돌릴 수 없는 결정은 정하지 않는다. 그 작업에서 그 결정 없이 할 수 있는 데까지 하고 `hold` 로 적는다.
 - 권한이 거부되면 형태를 바꿔 다시 시도하지 않는다. `blocked` 로 적고 다음 작업으로 간다.
-- 질문으로 턴을 끝내지 않는다. 남은 작업이 있으면 턴 종료와 질문 도구, 권한 창이 hook 에 막힌다.
+- 남은 작업이 있는 동안에는 턴을 끝내지 않고, 사용자에게 묻지 않고, 권한 승인을 기다리지 않는다. 승인이 있어야 할 수 있는 일이면 `blocked` 로 적고 다음 작업으로 간다.
 
-남은 작업이 0 이 되면 hook 은 아무것도 막지 않는다. 그 뒤에는 평소처럼 사용자와 대화한다.
+남은 작업이 0 이 되면 그 뒤에는 평소처럼 사용자와 대화한다.
