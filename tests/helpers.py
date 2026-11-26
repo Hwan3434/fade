@@ -6,6 +6,7 @@ import tempfile
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 JOB = os.path.join(ROOT, "skills", "job", "job.py")
 GATE = os.path.join(ROOT, "hooks", "merge_gate.py")
+PERMISSION = os.path.join(ROOT, "hooks", "permission_gate.py")
 
 
 def git_repo():

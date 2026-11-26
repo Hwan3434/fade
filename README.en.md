@@ -42,7 +42,7 @@ The goal is to delete prose as models get smarter until no lines are left, hence
 
 ## Skills
 
-- `job`: the smallest unit of work. Takes one plan and carries it through tests first, implementation, evidence, trying it by hand, PR, merge, and report. If the user narrows the scope (for example "PR only"), it does only that much.
+- `job`: the smallest unit of work. Takes one plan and carries it through tests first, implementation, evidence, trying it by hand, and code review repeated until nothing is left, then PR, merge, and report. If it cannot solve a problem or needs the user's decision, it stops there and reports. If the user narrows the scope (for example "PR only"), it does only that much.
 - `try`: uses the result the way the user would and leaves screens and logs for each case.
 - `harden`: stops a mistake the AI made with a check (lint, test, hook, permission settings) instead of adding prose to the instructions.
 - `grill`: asks about every decision left before execution, numbered and with a recommended answer, until none remain.
@@ -52,11 +52,10 @@ The goal is to delete prose as models get smarter until no lines are left, hence
 
 ## Structure
 
-- `skills/job/job.py`: `job`'s stage record. A failure before implementation (red) and a pass after it (green) are recorded only after running the command itself. Evidence and hands-on tries are recorded only with files. The record lives in the worktree's git directory and is never committed.
+- `skills/job/job.py`: `job`'s stage record. A failure before implementation (red) and a pass after it (green) are recorded only after running the command itself. Evidence and hands-on tries are recorded only with files. For the merge, green, evidence, tries, and review count only when taken at the current commit, so a fix commit means doing them again. The record lives in the worktree's git directory and is never committed.
 - `hooks/merge_gate.py`: right before `gh pr merge`, checks that worktree's `job` record and CI. If something is missing, or the job was "PR only", it blocks the merge and says why. Where there is no `job` record it does nothing. It is a guard rail against mistakes, not a security boundary.
-- `tests/`: tests for the two above and for `nonstop.py`, run by GitHub Actions on every PR.
-
-It works together with `/ship` (built into Claude Code). In a session with a person present, the user can type `/ship` at `job`'s PR stage to let ship handle the PR; the merge is still done by `job`'s merge stage.
+- `hooks/permission_gate.py`: in an unattended `job` (`job.py start --unattended`), when a permission prompt is about to appear it denies it instead of waiting. The job reports where it was blocked and ends. In any other session it does nothing.
+- `tests/`: tests for the three above and for `nonstop.py`, run by GitHub Actions on every PR.
 
 ## Install
 

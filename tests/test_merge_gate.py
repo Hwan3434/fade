@@ -35,6 +35,7 @@ class MergeGateTest(unittest.TestCase):
         open(shot, "w").close()
         job(self.cwd, "evidence", "기준", shot)
         job(self.cwd, "tried", "써 봄", shot)
+        job(self.cwd, "review", "0")
 
     def test_병합이_아닌_명령에는_말하지_않는다(self):
         self.assertIsNone(self.gate("gh pr view 3"))
