@@ -16,8 +16,8 @@ class MergeGateTest(unittest.TestCase):
         self.addCleanup(self.bin.cleanup)
         self.cwd = self.repo.name
 
-    def gate(self, command, ci_exit=0, ci_out=""):
-        fake_gh(self.bin.name, ci_exit, ci_out)
+    def gate(self, command, ci_exit=0, ci_out="", ci_err=""):
+        fake_gh(self.bin.name, ci_exit, ci_out, ci_err)
         env = dict(os.environ, PATH=self.bin.name + os.pathsep + os.environ["PATH"])
         payload = {"hook_event_name": "PreToolUse", "tool_name": "Bash", "cwd": self.cwd,
                    "tool_input": {"command": command}}
@@ -60,7 +60,11 @@ class MergeGateTest(unittest.TestCase):
 
     def test_CI_가_없는_레포는_막지_않는다(self):
         self.complete()
-        self.assertIsNone(self.gate("gh pr merge 3", ci_exit=1, ci_out="no checks reported on the 'x' branch"))
+        self.assertIsNone(self.gate("gh pr merge 3", ci_exit=1, ci_err="no checks reported on the 'x' branch"))
+
+    def test_gh_가_오류로_끝나면_CI_실패로_치지_않는다(self):
+        self.complete()
+        self.assertIsNone(self.gate("gh pr merge 3", ci_exit=1, ci_err="no git remotes found"))
 
     def test_PR_까지만인_작업은_막는다(self):
         job(self.cwd, "start", "작업", "--pr-only")

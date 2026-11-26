@@ -25,10 +25,11 @@ def job(cwd, *args):
     return subprocess.run([sys.executable, JOB, *args], cwd=cwd, capture_output=True, text=True)
 
 
-def fake_gh(dirpath, exit_code, output=""):
-    """PATH 앞에 둘 가짜 gh. `gh pr checks` 의 종료 코드와 출력을 정한다."""
+def fake_gh(dirpath, exit_code, output="", error=""):
+    """PATH 앞에 둘 가짜 gh. `gh pr checks` 의 종료 코드와 표준 출력, 표준 오류를 정한다."""
     path = os.path.join(dirpath, "gh")
     with open(path, "w") as f:
-        f.write("#!/bin/sh\nprintf '%s' " + repr(output) + "\nexit " + str(exit_code) + "\n")
+        f.write("#!/bin/sh\nprintf '%s' " + repr(output) + "\nprintf '%s' " + repr(error) + " >&2\nexit "
+                + str(exit_code) + "\n")
     os.chmod(path, 0o755)
     return dirpath

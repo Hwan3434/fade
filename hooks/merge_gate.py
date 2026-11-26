@@ -62,12 +62,13 @@ def ci_problem(cwd, merge_args):
         r = subprocess.run(["gh", "pr", "checks", *target, *repo], cwd=cwd, capture_output=True, text=True, timeout=30)
     except (OSError, subprocess.TimeoutExpired):
         return None
-    text = r.stdout + r.stderr
-    if r.returncode == 0 or "no checks reported" in text:
+    if r.returncode == 0:
         return None
     if r.returncode == 8:
         return "CI 가 아직 돌고 있다. 끝난 뒤 병합한다"
-    return "CI 가 실패했다. 원인을 고친 뒤 병합한다\n" + "\n".join(text.splitlines()[-10:])
+    if not r.stdout.strip():
+        return None  # 검사 줄이 없다: CI 가 없거나(no checks reported) gh 가 PR 을 못 찾은 오류
+    return "CI 가 실패했다. 원인을 고친 뒤 병합한다\n" + "\n".join(r.stdout.splitlines()[-10:])
 
 
 def main():
