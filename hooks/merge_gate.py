@@ -82,7 +82,7 @@ def main():
     state = job.load(cwd)
     if state is None or state["merged"] or state.get("branch") != job.branch(cwd):
         return
-    left = job.missing(state)
+    left = job.missing(state, cwd)
     problem = ci_problem(cwd, segments[0])
     if problem:
         left.append(problem)

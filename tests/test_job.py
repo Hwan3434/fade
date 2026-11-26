@@ -23,12 +23,17 @@ class JobTest(unittest.TestCase):
         return path
 
     def complete(self):
-        """병합 조건을 모두 채운다: red, green, 증거, 써 보기."""
+        """병합 조건을 모두 채운다: red, green, 증거, 써 보기, 리뷰."""
         self.assertEqual(job(self.cwd, "red", "test -f done.txt").returncode, 0)
         open(os.path.join(self.cwd, "done.txt"), "w").close()
         self.assertEqual(job(self.cwd, "green").returncode, 0)
         self.assertEqual(job(self.cwd, "evidence", "기준 1", self.shot()).returncode, 0)
         self.assertEqual(job(self.cwd, "tried", "화면에서 눌러 봄", self.shot("try.png")).returncode, 0)
+        self.assertEqual(job(self.cwd, "review", "0").returncode, 0)
+
+    def commit(self):
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-q",
+                        "--allow-empty", "-m", "수정"], cwd=self.cwd, check=True)
 
     def test_시작하지_않으면_다른_명령을_받지_않는다(self):
         r = job(self.cwd, "red", "false")
@@ -96,6 +101,7 @@ class JobTest(unittest.TestCase):
         self.assertEqual(job(self.cwd, "no-test", "이 레포에는 테스트 실행 장치가 없다").returncode, 0)
         job(self.cwd, "evidence", "기준", self.shot())
         job(self.cwd, "try-na", "화면도 명령도 없는 문서 변경")
+        job(self.cwd, "review", "0")
         self.assertEqual(job(self.cwd, "check").returncode, 0)
 
     def test_PR_까지만이면_병합_조건을_채워도_막는다(self):
@@ -112,6 +118,75 @@ class JobTest(unittest.TestCase):
         r = job(self.cwd, "check")
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("사람이 볼 것", r.stdout)
+
+    def test_리뷰_지적이_남으면_막는다(self):
+        self.start()
+        self.complete()
+        job(self.cwd, "review", "2", "널 처리 두 군데")
+        out = job(self.cwd, "check").stdout
+        self.assertIn("리뷰", out)
+        self.assertIn("2", out)
+
+    def test_리뷰가_없으면_막는다(self):
+        self.start()
+        job(self.cwd, "no-test", "장치 없음")
+        job(self.cwd, "evidence", "기준", self.shot())
+        job(self.cwd, "try-na", "써 볼 것 없음")
+        self.assertIn("리뷰", job(self.cwd, "check").stdout)
+
+    def test_고친_커밋이_생기면_앞_기록을_다시_해야_한다(self):
+        self.start()
+        self.complete()
+        self.assertEqual(job(self.cwd, "check").returncode, 0)
+        self.commit()
+        out = job(self.cwd, "check").stdout
+        for word in ("green", "기준 1", "써 보기", "리뷰"):
+            self.assertIn(word, out)
+
+    def test_마지막_커밋에서_다시_하면_통과한다(self):
+        self.start()
+        self.complete()
+        self.commit()
+        self.assertEqual(job(self.cwd, "green").returncode, 0)
+        job(self.cwd, "evidence", "기준 1", self.shot())
+        job(self.cwd, "tried", "다시 눌러 봄", self.shot("try.png"))
+        job(self.cwd, "review", "0")
+        r = job(self.cwd, "check")
+        self.assertEqual(r.returncode, 0, r.stdout)
+
+    def test_기준마다_마지막_커밋의_증거가_있어야_한다(self):
+        self.start()
+        self.complete()
+        job(self.cwd, "evidence", "기준 2", self.shot("b.png"))
+        self.commit()
+        job(self.cwd, "green")
+        job(self.cwd, "evidence", "기준 1", self.shot())
+        job(self.cwd, "tried", "다시 눌러 봄", self.shot("try.png"))
+        job(self.cwd, "review", "0")
+        out = job(self.cwd, "check").stdout
+        self.assertIn("기준 2", out)
+        self.assertNotIn("기준 1", out)
+
+    def test_stop_은_멈춘_이유를_남기고_병합을_막는다(self):
+        self.start()
+        self.complete()
+        self.assertEqual(job(self.cwd, "stop", "요청대로는 API 가 없어 만들 수 없다").returncode, 0)
+        r = job(self.cwd, "check")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("API 가 없어", r.stdout)
+        self.assertIn("API 가 없어", job(self.cwd, "show").stdout)
+
+    def test_scope_로_범위를_바꾼다(self):
+        self.start("--pr-only")
+        self.complete()
+        self.assertIn("PR 까지만", job(self.cwd, "check").stdout)
+        self.assertEqual(job(self.cwd, "scope", "merge").returncode, 0)
+        self.assertEqual(job(self.cwd, "check").returncode, 0)
+        self.assertNotEqual(job(self.cwd, "scope", "deploy").returncode, 0)
+
+    def test_사람_없는_작업으로_시작할_수_있다(self):
+        self.start("--unattended")
+        self.assertIn("사람 없음", job(self.cwd, "show").stdout)
 
     def test_사람이_볼_것이_있으면_써_보기를_채운_것으로_친다(self):
         self.start()
@@ -130,11 +205,44 @@ class JobTest(unittest.TestCase):
         self.assertIn("test -f a.txt", out)
         self.assertIn("test -f b.txt", out)
 
+    def tracked_change(self):
+        path = os.path.join(self.cwd, "app.txt")
+        with open(path, "w") as f:
+            f.write("v1")
+        subprocess.run(["git", "add", "app.txt"], cwd=self.cwd, check=True)
+        self.commit()
+        with open(path, "w") as f:
+            f.write("v2")
+
     def test_커밋_전_변경이_있으면_표시한다(self):
         self.start()
-        open(os.path.join(self.cwd, "wip.txt"), "w").close()
+        self.tracked_change()
         job(self.cwd, "red", "test -f done.txt")
         self.assertIn("커밋 전 변경", job(self.cwd, "show").stdout)
+
+    def test_추적하지_않는_파일만_있으면_커밋_전_변경으로_치지_않는다(self):
+        self.start()
+        open(os.path.join(self.cwd, "screenshot.png"), "w").close()
+        job(self.cwd, "red", "test -f done.txt")
+        self.assertNotIn("커밋 전 변경", job(self.cwd, "show").stdout)
+
+    def test_커밋_전_변경으로_찍은_green_과_리뷰는_병합에_치지_않는다(self):
+        self.start()
+        self.tracked_change()
+        self.complete()
+        out = job(self.cwd, "check").stdout
+        self.assertIn("green", out)
+        self.assertIn("리뷰", out)
+
+    def test_기록은_전체_SHA_로_비교하고_짧게_보여_준다(self):
+        self.start()
+        self.commit()
+        self.complete()
+        self.assertEqual(job(self.cwd, "check").returncode, 0)
+        full = subprocess.run(["git", "rev-parse", "HEAD"], cwd=self.cwd, capture_output=True, text=True).stdout.strip()
+        out = job(self.cwd, "show").stdout
+        self.assertIn(full[:7], out)
+        self.assertNotIn(full, out)
 
     def test_drop_은_그_기준의_증거를_지운다(self):
         self.start()
