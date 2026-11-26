@@ -2,7 +2,7 @@
 """사람 없는 fade job 에서 승인 창이 뜨려 하면 기다리지 않고 거부한다.
 
 `job.py start --unattended` 로 시작한 작업의 브랜치에서만 판정한다. 그 밖의 세션이나 이 훅이 오류로 죽은
-경우에는 아무 판정도 내지 않고 평소처럼 승인 창이 뜬다. 막기만 하고 허용은 하지 않는다.
+경우에는 아무 판정도 내지 않고 평소처럼 승인 창이 뜬다. 막기만 하고 허용은 하지 않는다. 거부하면 실수 기록에 한 줄 남긴다.
 """
 import json
 import os
@@ -26,7 +26,8 @@ def main():
                "`job.py stop \"<막힌 자리와 이유>\"` 로 남기고, 사용자에게 보고한 뒤 끝낸다.")
     print(json.dumps({"hookSpecificOutput": {"hookEventName": "PermissionRequest",
                                              "decision": {"behavior": "deny", "message": message, "interrupt": False}}},
-                     ensure_ascii=False))
+                     ensure_ascii=False), flush=True)
+    job.add_mistake(cwd, state, "permission", "승인이 필요한 일을 하려 했다: " + what)  # 판정을 먼저 내보내 기록이 실패해도 거부한다
 
 
 if __name__ == "__main__":
