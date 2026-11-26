@@ -1,9 +1,10 @@
 import json
+import os
 import subprocess
 import sys
 import unittest
 
-from helpers import PERMISSION, commit_and_switch, git_repo, job
+from helpers import PERMISSION, commit_and_switch, git_repo, job, mistakes
 
 
 class PermissionGateTest(unittest.TestCase):
@@ -12,10 +13,11 @@ class PermissionGateTest(unittest.TestCase):
         self.addCleanup(self.repo.cleanup)
         self.cwd = self.repo.name
 
-    def ask(self, command="git rebase origin/main"):
+    def ask(self, command="git rebase origin/main", env=None):
         payload = {"hook_event_name": "PermissionRequest", "tool_name": "Bash", "cwd": self.cwd,
                    "tool_input": {"command": command}}
-        r = subprocess.run([sys.executable, PERMISSION], input=json.dumps(payload), capture_output=True, text=True)
+        r = subprocess.run([sys.executable, PERMISSION], input=json.dumps(payload), capture_output=True, text=True,
+                           env=env)
         self.assertEqual(r.returncode, 0, r.stderr)
         return json.loads(r.stdout)["hookSpecificOutput"] if r.stdout.strip() else None
 
@@ -38,6 +40,28 @@ class PermissionGateTest(unittest.TestCase):
         job(self.cwd, "start", "작업", "--unattended")
         commit_and_switch(self.cwd, "other")
         self.assertIsNone(self.ask())
+
+    def test_거부하면_실수_기록에_남긴다(self):
+        job(self.cwd, "start", "작업", "--unattended")
+        before = len(mistakes())
+        self.ask("git push --force origin feat/x")
+        rows = mistakes()[before:]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["source"], "permission")
+        self.assertIn("git push --force origin feat/x", rows[0]["what"])
+
+    def test_거부하지_않으면_실수_기록에_남기지_않는다(self):
+        job(self.cwd, "start", "작업")
+        before = len(mistakes())
+        self.assertIsNone(self.ask())
+        self.assertEqual(len(mistakes()), before)
+
+    def test_실수_기록을_쓸_수_없어도_거부한다(self):
+        job(self.cwd, "start", "작업", "--unattended")
+        blocker = os.path.join(self.cwd, "file")
+        open(blocker, "w").close()
+        out = self.ask(env=dict(os.environ, FADE_MISTAKES=os.path.join(blocker, "mistakes.jsonl")))
+        self.assertEqual(out["decision"]["behavior"], "deny")
 
     def test_입력이_깨져도_막지_않는다(self):
         r = subprocess.run([sys.executable, PERMISSION], input="{깨진", capture_output=True, text=True)

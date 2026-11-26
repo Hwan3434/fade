@@ -5,7 +5,7 @@ import sys
 import tempfile
 import unittest
 
-from helpers import GATE, commit_and_switch, fake_gh, git_repo, job
+from helpers import GATE, commit_and_switch, fake_gh, git_repo, job, mistakes
 
 
 class MergeGateTest(unittest.TestCase):
@@ -16,9 +16,9 @@ class MergeGateTest(unittest.TestCase):
         self.addCleanup(self.bin.cleanup)
         self.cwd = self.repo.name
 
-    def gate(self, command, ci_exit=0, ci_out="", ci_err=""):
-        fake_gh(self.bin.name, ci_exit, ci_out, ci_err)
-        env = dict(os.environ, PATH=self.bin.name + os.pathsep + os.environ["PATH"])
+    def gate(self, command, ci_exit=0, ci_out="", ci_err="", head=None, head_exit=0, **extra_env):
+        fake_gh(self.bin.name, ci_exit, ci_out, ci_err, head=head, head_exit=head_exit)
+        env = dict(os.environ, PATH=self.bin.name + os.pathsep + os.environ["PATH"], **extra_env)
         payload = {"hook_event_name": "PreToolUse", "tool_name": "Bash", "cwd": self.cwd,
                    "tool_input": {"command": command}}
         r = subprocess.run([sys.executable, GATE], input=json.dumps(payload), capture_output=True,
@@ -36,6 +36,11 @@ class MergeGateTest(unittest.TestCase):
         job(self.cwd, "evidence", "기준", shot)
         job(self.cwd, "tried", "써 봄", shot)
         job(self.cwd, "review", "0")
+        job(self.cwd, "door", "two-way", "스크립트만 바뀐다")
+
+    def head(self):
+        return subprocess.run(["git", "rev-parse", "HEAD"], cwd=self.cwd, capture_output=True,
+                              text=True).stdout.strip()
 
     def test_병합이_아닌_명령에는_말하지_않는다(self):
         self.assertIsNone(self.gate("gh pr view 3"))
@@ -99,6 +104,66 @@ class MergeGateTest(unittest.TestCase):
         self.assertEqual(pr_target(["--squash", "--subject", "제목", "3"]), (["3"], []))
         self.assertEqual(pr_target(["-R", "o/r", "--body", "본문", "12"]), (["12"], ["-R", "o/r"]))
         self.assertEqual(pr_target(["--squash"]), ([], []))
+
+    def test_PR_최신_커밋이_검증한_로컬_HEAD_와_다르면_막는다(self):
+        commit_and_switch(self.cwd, "feat/x")
+        self.complete()
+        out = self.gate("gh pr merge 3 --squash", head="0123456789abcdef0123456789abcdef01234567")
+        self.assertEqual(out["permissionDecision"], "deny")
+        self.assertIn("0123456", out["permissionDecisionReason"])
+        self.assertIn(self.head()[:7], out["permissionDecisionReason"])
+
+    def test_PR_최신_커밋이_로컬_HEAD_와_같으면_막지_않는다(self):
+        commit_and_switch(self.cwd, "feat/x")
+        self.complete()
+        self.assertIsNone(self.gate("gh pr merge 3 --squash", head=self.head()))
+
+    def test_gh_pr_view_가_오류로_끝나면_커밋_대조를_하지_않는다(self):
+        commit_and_switch(self.cwd, "feat/x")
+        self.complete()
+        self.assertIsNone(self.gate("gh pr merge 3 --squash"))  # PR 을 못 찾음
+        self.assertIsNone(self.gate("gh pr merge 3 --squash", head="0123456", head_exit=1))
+        self.assertIsNone(self.gate("gh pr merge 3 --squash", head=""))  # 읽은 값이 비었다
+
+    def test_한쪽_문이면_막는다(self):
+        self.complete()
+        job(self.cwd, "door", "one-way", "배포가 함께 나간다")
+        out = self.gate("gh pr merge 3 --squash")
+        self.assertEqual(out["permissionDecision"], "deny")
+        self.assertIn("한쪽 문", out["permissionDecisionReason"])
+
+    def test_막으면_실수_기록에_남긴다(self):
+        job(self.cwd, "start", "작업")
+        job(self.cwd, "pr", "https://github.com/o/r/pull/3")
+        before = len(mistakes())
+        self.assertEqual(self.gate("gh pr merge 3 --squash")["permissionDecision"], "deny")
+        rows = mistakes()[before:]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["source"], "gate")
+        self.assertIn("테스트", rows[0]["what"])
+        self.assertEqual(rows[0]["pr"], "https://github.com/o/r/pull/3")
+
+    def test_막지_않으면_실수_기록에_남기지_않는다(self):
+        self.complete()
+        before = len(mistakes())
+        self.assertIsNone(self.gate("gh pr merge 3 --squash"))
+        self.assertEqual(len(mistakes()), before)
+
+    def test_실수_기록을_쓸_수_없어도_막는다(self):
+        job(self.cwd, "start", "작업")
+        blocker = os.path.join(self.cwd, "file")
+        open(blocker, "w").close()
+        out = self.gate("gh pr merge 3 --squash", FADE_MISTAKES=os.path.join(blocker, "mistakes.jsonl"))
+        self.assertEqual(out["permissionDecision"], "deny")
+
+    def test_여러_줄_명령의_뒷줄_병합도_본다(self):
+        job(self.cwd, "start", "작업")
+        self.assertEqual(self.gate("git push origin x\ngh pr merge 3 --squash")["permissionDecision"], "deny")
+
+    def test_heredoc_본문의_글자는_명령이_아니다(self):
+        job(self.cwd, "start", "작업")
+        self.assertIsNone(self.gate("cat > notes.md <<'EOF'\ngh pr merge 3 --squash\nEOF"))
+        self.assertIsNone(self.gate('git commit -m "$(cat <<EOF\ngh pr merge 3\nEOF\n)"'))
 
     def test_입력이_깨져도_막지_않고_평소_흐름으로_넘긴다(self):
         r = subprocess.run([sys.executable, GATE], input="{깨진", capture_output=True, text=True)
