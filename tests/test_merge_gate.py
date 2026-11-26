@@ -5,7 +5,7 @@ import sys
 import tempfile
 import unittest
 
-from helpers import GATE, fake_gh, git_repo, job
+from helpers import GATE, commit_and_switch, fake_gh, git_repo, job
 
 
 class MergeGateTest(unittest.TestCase):
@@ -70,9 +70,15 @@ class MergeGateTest(unittest.TestCase):
 
     def test_다른_브랜치에서는_말하지_않는다(self):
         job(self.cwd, "start", "작업")
-        subprocess.run(["git", "commit", "-q", "--allow-empty", "-m", "x"], cwd=self.cwd, check=True)
-        subprocess.run(["git", "switch", "-q", "-c", "other"], cwd=self.cwd, check=True)
+        commit_and_switch(self.cwd, "other")
         self.assertIsNone(self.gate("gh pr merge 3 --squash"))
+
+    def test_시작한_뒤_브랜치를_바꿔도_그_뒤의_기록을_따라간다(self):
+        job(self.cwd, "start", "작업")
+        commit_and_switch(self.cwd, "feat/renamed")
+        job(self.cwd, "no-test", "장치 없음")
+        out = self.gate("gh pr merge 3 --squash")
+        self.assertEqual(out["permissionDecision"], "deny")
 
     def test_병합이_기록된_작업은_더_막지_않는다(self):
         job(self.cwd, "start", "작업")

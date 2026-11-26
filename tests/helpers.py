@@ -14,6 +14,13 @@ def git_repo():
     return d
 
 
+def commit_and_switch(cwd, branch):
+    """빈 커밋을 하나 만들고 새 브랜치로 옮긴다. CI 러너에는 git 사용자 정보가 없어 여기서 준다."""
+    subprocess.run(["git", "-c", "user.name=fade-test", "-c", "user.email=fade-test@example.invalid",
+                    "commit", "-q", "--allow-empty", "-m", "x"], cwd=cwd, check=True)
+    subprocess.run(["git", "switch", "-q", "-c", branch], cwd=cwd, check=True)
+
+
 def job(cwd, *args):
     return subprocess.run([sys.executable, JOB, *args], cwd=cwd, capture_output=True, text=True)
 

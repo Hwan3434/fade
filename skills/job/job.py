@@ -45,6 +45,8 @@ def load(cwd):
 
 
 def save(cwd, state):
+    # 데스크톱 앱이 만든 워크트리에서 시작한 뒤 레포 규칙대로 브랜치를 새로 따는 일이 있어, 기록할 때마다 지금 브랜치로 맞춘다
+    state["branch"] = branch(cwd)
     p = state_path(cwd)
     with open(p + ".tmp", "w", encoding="utf-8") as f:
         json.dump(state, f, ensure_ascii=False, indent=2)
