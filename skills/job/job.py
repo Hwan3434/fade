@@ -82,6 +82,10 @@ def at(record):
     return record["head"] + (", 커밋 전 변경 있음" if record.get("dirty") else "")
 
 
+def where(cwd):
+    return {"head": head(cwd), "dirty": dirty(cwd)}
+
+
 def missing(state):
     """병합을 막는 빠진 것들. 비어 있으면 병합해도 된다."""
     out = []
@@ -122,12 +126,13 @@ def show(state, full=False):
     if state["evidence"]:
         lines.append("- 증거:")
         for e in state["evidence"]:
-            lines.append("  - " + e["criterion"] + (" (명령 `%s`, 종료 코드 %d)" % (e["cmd"], e["code"]) if e.get("cmd") else ""))
+            lines.append("  - " + e["criterion"] + (" (명령 `%s`, 종료 코드 %d)" % (e["cmd"], e["code"]) if e.get("cmd") else "")
+                         + (" (커밋 %s)" % at(e) if e.get("head") else ""))
             lines += file_lines(e["files"], full)
     if state["tried"]:
         lines.append("- 직접 써 보기:")
         for t in state["tried"]:
-            lines.append("  - " + t["what"])
+            lines.append("  - " + t["what"] + (" (커밋 %s)" % at(t) if t.get("head") else ""))
             lines += file_lines(t["files"], full)
     if state["try_na"]:
         lines.append("- 직접 써 보기: 해당 없음 — " + state["try_na"])
@@ -140,7 +145,8 @@ def show(state, full=False):
     left = missing(state)
     if left and not state["merged"]:
         lines += ["", "병합 전에 빠진 것:"] + ["- " + m for m in left]
-    return "\n".join(lines)
+    # 이 출력은 공개 PR 에도 붙으니 사용자 이름이 든 홈 경로를 줄인다
+    return "\n".join(lines).replace(os.path.expanduser("~"), "~")
 
 
 def need_files(paths):
@@ -195,7 +201,7 @@ def main(argv):
     elif cmd == "no-test":
         state["no_test"] = args[0]
     elif cmd == "evidence":
-        state["evidence"].append({"criterion": args[0], "files": need_files(args[1:])})
+        state["evidence"].append({"criterion": args[0], "files": need_files(args[1:]), **where(cwd)})
     elif cmd == "drop":
         kept = [e for e in state["evidence"] if e["criterion"] != args[0]]
         if len(kept) == len(state["evidence"]):
@@ -208,10 +214,10 @@ def main(argv):
         path = os.path.join(logs, "%02d.log" % (len([f for f in os.listdir(logs) if f.endswith(".log")]) + 1))
         with open(path, "w", encoding="utf-8") as f:
             f.write("$ %s\n%s\n(종료 코드 %d)\n" % (args[1], out.rstrip("\n"), code))
-        state["evidence"].append({"criterion": args[0], "files": [path], "cmd": args[1], "code": code})
+        state["evidence"].append({"criterion": args[0], "files": [path], "cmd": args[1], "code": code, **where(cwd)})
         print(tail_of(out))
     elif cmd == "tried":
-        state["tried"].append({"what": args[0], "files": need_files(args[1:])})
+        state["tried"].append({"what": args[0], "files": need_files(args[1:]), **where(cwd)})
     elif cmd == "try-na":
         state["try_na"] = args[0]
     elif cmd == "human":

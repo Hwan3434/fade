@@ -1,7 +1,9 @@
 import os
+import subprocess
+import sys
 import unittest
 
-from helpers import commit_and_switch, git_repo, job
+from helpers import JOB, commit_and_switch, git_repo, job
 
 
 class JobTest(unittest.TestCase):
@@ -152,6 +154,23 @@ class JobTest(unittest.TestCase):
         text = open(path, encoding="utf-8").read()
         self.assertIn("\n1\n", text)
         self.assertIn("\n60\n", text)
+
+    def test_show_는_홈_경로를_물결표로_줄인다(self):
+        home = os.path.join(self.cwd, "home")
+        os.makedirs(home)
+        shot = os.path.join(home, "s.png")
+        open(shot, "w").close()
+        self.start()
+        job(self.cwd, "evidence", "기준", shot)
+        r = subprocess.run([sys.executable, JOB, "show"], cwd=self.cwd, capture_output=True, text=True,
+                           env=dict(os.environ, HOME=home))
+        self.assertIn("~/s.png", r.stdout)
+        self.assertNotIn(home, r.stdout)
+
+    def test_증거마다_찍은_커밋을_적는다(self):
+        self.start()
+        job(self.cwd, "evidence", "기준", self.shot())
+        self.assertIn("(커밋 없음", job(self.cwd, "show").stdout)
 
     def test_show_full_은_로그_내용을_붙인다(self):
         self.start()
