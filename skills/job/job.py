@@ -51,6 +51,11 @@ def save(cwd, state):
     os.replace(p + ".tmp", p)
 
 
+def branch(cwd):
+    r = subprocess.run(["git", "branch", "--show-current"], cwd=cwd, capture_output=True, text=True)
+    return r.stdout.strip()
+
+
 def head(cwd):
     r = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=cwd, capture_output=True, text=True)
     return r.stdout.strip() or "(커밋 없음)"
@@ -128,11 +133,12 @@ def main(argv):
         sys.exit("git 레포 안에서 돌린다")
     state = load(cwd)
     if cmd == "start":
-        if state:
-            sys.exit("이 워크트리에는 이미 시작한 작업이 있다: " + state["title"])
+        if state and not state["merged"] and state.get("branch") == branch(cwd):
+            sys.exit("이 브랜치에는 이미 시작한 작업이 있다: " + state["title"])
         if not args:
             sys.exit("작업 제목이 없다")
         state = {"title": args[0], "scope": "pr" if "--pr-only" in args else "merge", "started": time.time(),
+                 "branch": branch(cwd),
                  "red": None, "green": None, "no_test": None, "evidence": [], "tried": [], "try_na": None,
                  "human": [], "pr": None, "merged": None}
         save(cwd, state)

@@ -38,6 +38,15 @@ class JobTest(unittest.TestCase):
         r = job(self.cwd, "start", "또")
         self.assertNotEqual(r.returncode, 0)
 
+    def test_병합이_끝났거나_브랜치가_바뀌면_새_작업을_시작한다(self):
+        self.start()
+        job(self.cwd, "merged", "abc1234")
+        self.assertEqual(job(self.cwd, "start", "다음 작업").returncode, 0)
+        import subprocess
+        subprocess.run(["git", "commit", "-q", "--allow-empty", "-m", "x"], cwd=self.cwd, check=True)
+        subprocess.run(["git", "switch", "-q", "-c", "other"], cwd=self.cwd, check=True)
+        self.assertEqual(job(self.cwd, "start", "다른 브랜치 작업").returncode, 0)
+
     def test_red_는_실패하는_명령만_기록한다(self):
         self.start()
         r = job(self.cwd, "red", "true")

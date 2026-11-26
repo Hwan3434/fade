@@ -68,6 +68,27 @@ class MergeGateTest(unittest.TestCase):
         self.assertEqual(out["permissionDecision"], "deny")
         self.assertIn("PR 까지만", out["permissionDecisionReason"])
 
+    def test_다른_브랜치에서는_말하지_않는다(self):
+        job(self.cwd, "start", "작업")
+        subprocess.run(["git", "commit", "-q", "--allow-empty", "-m", "x"], cwd=self.cwd, check=True)
+        subprocess.run(["git", "switch", "-q", "-c", "other"], cwd=self.cwd, check=True)
+        self.assertIsNone(self.gate("gh pr merge 3 --squash"))
+
+    def test_병합이_기록된_작업은_더_막지_않는다(self):
+        job(self.cwd, "start", "작업")
+        job(self.cwd, "merged", "abc1234")
+        self.assertIsNone(self.gate("gh pr merge 9 --squash"))
+
+    def test_값이_붙는_옵션의_값을_PR_번호로_읽지_않는다(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("merge_gate", GATE)
+        gate = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(gate)
+        pr_target = gate.pr_target
+        self.assertEqual(pr_target(["--squash", "--subject", "제목", "3"]), (["3"], []))
+        self.assertEqual(pr_target(["-R", "o/r", "--body", "본문", "12"]), (["12"], ["-R", "o/r"]))
+        self.assertEqual(pr_target(["--squash"]), ([], []))
+
     def test_입력이_깨져도_막지_않고_평소_흐름으로_넘긴다(self):
         r = subprocess.run([sys.executable, GATE], input="{깨진", capture_output=True, text=True)
         self.assertEqual(r.returncode, 0)
