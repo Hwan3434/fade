@@ -2,8 +2,8 @@
 
 [한국어](README.md) · [日本語](README.ja.md) · [中文](README.zh.md)
 
-A set of skills that does not depend on any one agent. It is currently distributed as a Claude Code plugin. It was not built to gain features; it was built to shrink.
-The goal is to delete lines as models get smarter until none are left, hence the name fade.
+A skill plugin for Claude Code only. It is used in the Claude desktop app (Code tab) and the Claude CLI. If you use another agent, read the skills and adapt them to your environment. It was not built to gain features; it was built to shrink.
+The goal is to delete prose as models get smarter until no lines are left, hence the name fade. What shrinks is the prose. The structure that guards the process (scripts, hooks, tests) stays.
 
 ## Why it exists
 
@@ -26,25 +26,37 @@ The goal is to delete lines as models get smarter until none are left, hence the
 ## How it is built
 
 - Guarding a repo (static checks, hooks, lint, tests, verification tools) is that repo's job. fade holds only how a lead and its workers work on top of it.
-- Even a rule that prose could enforce is taken out of the skills when a check can enforce it, and sent to the repo's checks instead. What stays in the skills is process alone.
+- That way of working is also guarded by structure rather than prose. `job`'s stage record is kept by a script (`job.py`) that records only what it confirmed by running the test command itself, and right before a merge a hook checks that record and CI. The only structure fade ships is fade's own work format, which has nothing to do with any particular repo.
+- Even a rule that prose could enforce is taken out of the skills when a check can enforce it. It goes first to the repo's checks, and anything that differs per person goes to that person's settings. What stays in the skills is process alone.
 - So it only works well in repos that have those checks. `nonstop`, which runs with no one watching, stops only by refusing actions the repo asks to confirm; in a repo without such checks, nothing stops those actions.
-- Values that differ per repo (base branch, merge method, how to verify) are not written down. The model running in that repo reads the repo and decides.
+- Values that differ per repo or per person (base branch, merge method, branch names, how to verify) are not written down. The repo's rules and the person's settings decide them, and the model reads and follows them.
 - A line is added only when the failure it prevents has been seen in a real session. Lines describing what the model already does are deleted.
-- Only what is used with the same text across many repos goes in. The text names no agent-specific tools or mechanisms; it states only the conditions to meet. How to meet them is up to the environment that uses it.
+- Only what is used with the same text across many repos goes in. It also says how to meet the conditions in the Claude desktop app and the CLI.
 
 ## Where it is going
 
 - With every new model, try deleting lines one by one. If the model does the job without a line, that line does not come back.
 - Lines are added only when a failure is confirmed. Even added lines are future candidates for deletion.
+- Structure that is no longer used is deleted too. But a check is not deleted just because models got better.
 - When the skills disappear one by one and the last line is deleted, that is when this plugin is finished.
 
 ## Skills
 
-- `job`: the smallest unit of work. Takes one plan and carries it through planning, implementation, verification, commit, PR, and a report with evidence attached.
+- `job`: the smallest unit of work. Takes one plan and carries it through tests first, implementation, evidence, trying it by hand, PR, merge, and report. If the user narrows the scope (for example "PR only"), it does only that much.
+- `try`: uses the result the way the user would and leaves screens and logs for each case.
+- `harden`: stops a mistake the AI made with a check (lint, test, hook, permission settings) instead of adding prose to the instructions.
 - `grill`: asks about every decision left before execution, numbered and with a recommended answer, until none remain.
-- `dispatch`: hands a code change to a new session (a worker) running in the repo's worktree as a `job` plan, and checks the worker's evidence against the done criteria.
+- `dispatch`: hands a code change to a new session (a worker) running in the repo's worktree as a `job` plan, and checks the worker's evidence against the done criteria. Starts workers with the session tools in the desktop app and with `claude -p` in the CLI.
 - `debug`: starts by building one failing command, then diagnoses the bug in a fixed order.
 - `nonstop`: works through a task list to the end with no one watching, running each task as a `job`. Only for when the user invokes it directly.
+
+## Structure
+
+- `skills/job/job.py`: `job`'s stage record. A failure before implementation (red) and a pass after it (green) are recorded only after running the command itself. Evidence and hands-on tries are recorded only with files. The record lives in the worktree's git directory and is never committed.
+- `hooks/merge_gate.py`: right before `gh pr merge`, checks that worktree's `job` record and CI. If something is missing, or the job was "PR only", it blocks the merge and says why. Where there is no `job` record it does nothing. It is a guard rail against mistakes, not a security boundary.
+- `tests/`: tests for the two above and for `nonstop.py`, run by GitHub Actions on every PR.
+
+It works together with `/ship` (built into Claude Code). In a session with a person present, the user can type `/ship` at `job`'s PR stage to let ship handle the PR; the merge is still done by `job`'s merge stage.
 
 ## Install
 
@@ -56,7 +68,7 @@ claude plugin marketplace add Hwan3434/fade
 claude plugin install fade@fade
 ```
 
-Claude cloud sessions do not load plugins. For a repo used in the cloud, put a copy of the skill folders in `.claude/skills/`.
+The desktop app reads the same settings, so installing once from the CLI makes it available in both. Claude cloud sessions do not load plugins. For a repo used in the cloud, put a copy of the skill folders in `.claude/skills/`.
 
 ## Credits
 

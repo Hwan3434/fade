@@ -1,5 +1,5 @@
 {
   "name": "fade",
-  "description": "레포의 검사 위에서 리드·워커가 일하는 방식만 담은 Claude Code 스킬 모음",
+  "description": "Claude 데스크톱 앱과 CLI 에서 리드·워커가 테스트 먼저부터 병합까지 일하는 방식과, 그 방식을 지키는 기록 스크립트와 훅",
   "author": { "name": "jeonghwan lee" }
 }
