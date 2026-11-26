@@ -111,6 +111,54 @@ class JobTest(unittest.TestCase):
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("사람이 볼 것", r.stdout)
 
+    def test_사람이_볼_것이_있으면_써_보기를_채운_것으로_친다(self):
+        self.start()
+        job(self.cwd, "no-test", "장치 없음")
+        job(self.cwd, "evidence", "기준", self.shot())
+        job(self.cwd, "human", "앱 화면은 사람이 본다")
+        out = job(self.cwd, "check").stdout
+        self.assertNotIn("직접 써 보기", out)
+        self.assertIn("사람이 볼 것", out)
+
+    def test_red_를_다시_돌려도_앞_기록이_남는다(self):
+        self.start()
+        job(self.cwd, "red", "test -f a.txt")
+        job(self.cwd, "red", "test -f b.txt")
+        out = job(self.cwd, "show").stdout
+        self.assertIn("test -f a.txt", out)
+        self.assertIn("test -f b.txt", out)
+
+    def test_커밋_전_변경이_있으면_표시한다(self):
+        self.start()
+        open(os.path.join(self.cwd, "wip.txt"), "w").close()
+        job(self.cwd, "red", "test -f done.txt")
+        self.assertIn("커밋 전 변경", job(self.cwd, "show").stdout)
+
+    def test_drop_은_그_기준의_증거를_지운다(self):
+        self.start()
+        job(self.cwd, "evidence", "기준 A", self.shot("a.png"))
+        job(self.cwd, "evidence", "기준 B", self.shot("b.png"))
+        self.assertEqual(job(self.cwd, "drop", "기준 A").returncode, 0)
+        out = job(self.cwd, "show").stdout
+        self.assertNotIn("기준 A", out)
+        self.assertIn("기준 B", out)
+
+    def test_log_는_출력을_자르지_않고_따로_번호를_매긴다(self):
+        self.start()
+        job(self.cwd, "evidence", "기준 A", self.shot())
+        job(self.cwd, "log", "기준 B", "seq 1 60")
+        path = [line.strip()[2:] for line in job(self.cwd, "show").stdout.splitlines() if line.strip().endswith(".log")][0]
+        self.assertTrue(path.endswith("01.log"), path)
+        text = open(path, encoding="utf-8").read()
+        self.assertIn("\n1\n", text)
+        self.assertIn("\n60\n", text)
+
+    def test_show_full_은_로그_내용을_붙인다(self):
+        self.start()
+        job(self.cwd, "log", "기준", "echo 실제=$((1+2))")
+        self.assertNotIn("실제=3", job(self.cwd, "show").stdout)
+        self.assertIn("실제=3", job(self.cwd, "show", "--full").stdout)
+
     def test_show_는_PR_본문에_붙일_기록을_낸다(self):
         self.start()
         self.complete()

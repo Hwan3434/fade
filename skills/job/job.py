@@ -8,14 +8,15 @@
   job.py green                           red 의 명령을 다시 돌려 통과할 때만 기록한다 (구현 후)
   job.py no-test <이유>                  레포에 테스트 실행 장치가 없을 때 red·green 대신 이유를 적는다
   job.py evidence <완료 기준> <파일>...   스크린샷, 로그 같은 증거 파일을 기준에 붙인다
-  job.py log     <완료 기준> <명령>       명령을 돌려 출력을 파일로 남기고 증거로 붙인다
+  job.py log     <완료 기준> <명령>       명령을 돌려 출력 전체를 파일로 남기고 증거로 붙인다
+  job.py drop    <완료 기준>             그 기준에 붙인 증거를 모두 지운다 (다시 붙이기 전에)
   job.py tried   <무엇을 어떻게> <파일>...  직접 써 본 기록과 그 화면·출력 파일
   job.py try-na  <이유>                  써 볼 화면도 명령도 없는 작업일 때
-  job.py human   <사람이 볼 것>           사람만 판정할 수 있는 것이 남았을 때. 병합을 막는다
+  job.py human   <사람이 볼 것>           사람만 판정할 수 있는 것이 남았을 때. 직접 써 보기를 대신하고, 병합을 막는다
   job.py pr      <PR 주소>
   job.py check                           병합 조건을 본다. 빠진 것이 있으면 종료 코드 1
   job.py merged  <병합 커밋> [<base CI 결과>]
-  job.py show                            PR 본문과 보고에 붙일 기록
+  job.py show [--full]                   PR 본문과 보고에 붙일 기록. --full 이면 로그 파일 내용도 붙인다
 """
 import json
 import os
@@ -63,10 +64,22 @@ def head(cwd):
     return r.stdout.strip() or "(커밋 없음)"
 
 
+def dirty(cwd):
+    r = subprocess.run(["git", "status", "--porcelain"], cwd=cwd, capture_output=True, text=True)
+    return bool(r.stdout.strip())
+
+
 def run(cwd, command):
     r = subprocess.run(command, shell=True, cwd=cwd, capture_output=True, text=True)
-    out = (r.stdout + r.stderr).splitlines()
-    return r.returncode, "\n".join(out[-TAIL:])
+    return r.returncode, r.stdout + r.stderr
+
+
+def tail_of(text):
+    return "\n".join(text.splitlines()[-TAIL:])
+
+
+def at(record):
+    return record["head"] + (", 커밋 전 변경 있음" if record.get("dirty") else "")
 
 
 def missing(state):
@@ -78,32 +91,44 @@ def missing(state):
         out.append("테스트: 구현 전 실패(red)와 구현 후 통과(green)가 없다. 장치가 없으면 no-test 로 이유를 적는다")
     if not state["evidence"]:
         out.append("증거: 완료 기준에 붙인 로그나 스크린샷이 없다")
-    if not state["tried"] and not state["try_na"]:
-        out.append("직접 써 보기: 기록이 없다. 써 볼 것이 없는 작업이면 try-na 로 이유를 적는다")
+    if not state["tried"] and not state["try_na"] and not state["human"]:
+        out.append("직접 써 보기: 기록이 없다. 써 볼 것이 없는 작업이면 try-na, 지금 못 하면 human 으로 남긴다")
     for h in state["human"]:
         out.append("사람이 볼 것: " + h)
     return out
 
 
-def show(state):
+def file_lines(files, full):
+    out = []
+    for f in files:
+        out.append("    - " + f)
+        if full and f.endswith(".log") and os.path.isfile(f):
+            with open(f, encoding="utf-8", errors="replace") as fh:
+                out += ["", "      ```text"] + ["      " + line for line in fh.read().splitlines()] + ["      ```", ""]
+    return out
+
+
+def show(state, full=False):
     lines = ["## 작업 기록 (fade job)", "", "- 작업: " + state["title"],
              "- 범위: " + ("PR 까지" if state["scope"] == "pr" else "병합까지")]
     if state["no_test"]:
         lines.append("- 테스트: 없음 — " + state["no_test"])
+    for old in state.get("red_history", []):
+        lines.append("- 앞서 기록한 실패(red, %s): `%s` → 종료 코드 %d" % (at(old), old["cmd"], old["code"]))
     if state["red"]:
-        lines.append("- 구현 전 실패(red, %s): `%s` → 종료 코드 %d" % (state["red"]["head"], state["red"]["cmd"], state["red"]["code"]))
+        lines.append("- 구현 전 실패(red, %s): `%s` → 종료 코드 %d" % (at(state["red"]), state["red"]["cmd"], state["red"]["code"]))
     if state["green"]:
-        lines.append("- 구현 후 통과(green, %s): `%s`" % (state["green"]["head"], state["red"]["cmd"]))
+        lines.append("- 구현 후 통과(green, %s): `%s`" % (at(state["green"]), state["red"]["cmd"]))
     if state["evidence"]:
         lines.append("- 증거:")
         for e in state["evidence"]:
             lines.append("  - " + e["criterion"] + (" (명령 `%s`, 종료 코드 %d)" % (e["cmd"], e["code"]) if e.get("cmd") else ""))
-            lines += ["    - " + f for f in e["files"]]
+            lines += file_lines(e["files"], full)
     if state["tried"]:
         lines.append("- 직접 써 보기:")
         for t in state["tried"]:
             lines.append("  - " + t["what"])
-            lines += ["    - " + f for f in t["files"]]
+            lines += file_lines(t["files"], full)
     if state["try_na"]:
         lines.append("- 직접 써 보기: 해당 없음 — " + state["try_na"])
     for h in state["human"]:
@@ -148,35 +173,43 @@ def main(argv):
         return
     if state is None:
         sys.exit("작업 기록이 없다. job.py start 부터 한다")
-    need = {"red": 1, "no-test": 1, "evidence": 2, "log": 2, "tried": 1, "try-na": 1, "human": 1, "pr": 1, "merged": 1}
+    need = {"red": 1, "no-test": 1, "evidence": 2, "log": 2, "drop": 1, "tried": 1, "try-na": 1, "human": 1, "pr": 1,
+            "merged": 1}
     if len(args) < need.get(cmd, 0):
         sys.exit(__doc__)
     if cmd == "red":
-        code, tail = run(cwd, args[0])
+        code, out = run(cwd, args[0])
         if code == 0:
-            sys.exit("테스트가 실패하지 않는다. 이번 변경을 판정하지 못하는 테스트다. 테스트를 고친다\n" + tail)
-        state["red"] = {"cmd": args[0], "code": code, "head": head(cwd), "tail": tail}
+            sys.exit("테스트가 실패하지 않는다. 이번 변경을 판정하지 못하는 테스트다. 테스트를 고친다\n" + tail_of(out))
+        if state["red"]:
+            state.setdefault("red_history", []).append(state["red"])
+        state["red"] = {"cmd": args[0], "code": code, "head": head(cwd), "dirty": dirty(cwd), "tail": tail_of(out)}
         state["green"] = None
     elif cmd == "green":
         if not state["red"]:
             sys.exit("red 가 없다. 구현 전에 실패하는 테스트부터 기록한다")
-        code, tail = run(cwd, state["red"]["cmd"])
+        code, out = run(cwd, state["red"]["cmd"])
         if code != 0:
-            sys.exit("테스트가 아직 통과하지 않는다 (종료 코드 %d)\n%s" % (code, tail))
-        state["green"] = {"head": head(cwd), "tail": tail}
+            sys.exit("테스트가 아직 통과하지 않는다 (종료 코드 %d)\n%s" % (code, tail_of(out)))
+        state["green"] = {"head": head(cwd), "dirty": dirty(cwd), "tail": tail_of(out)}
     elif cmd == "no-test":
         state["no_test"] = args[0]
     elif cmd == "evidence":
         state["evidence"].append({"criterion": args[0], "files": need_files(args[1:])})
+    elif cmd == "drop":
+        kept = [e for e in state["evidence"] if e["criterion"] != args[0]]
+        if len(kept) == len(state["evidence"]):
+            sys.exit("그 기준에 붙인 증거가 없다: " + args[0])
+        state["evidence"] = kept
     elif cmd == "log":
-        code, tail = run(cwd, args[1])
+        code, out = run(cwd, args[1])
         logs = os.path.join(git_dir(cwd), "fade-job-logs")
         os.makedirs(logs, exist_ok=True)
-        path = os.path.join(logs, "%02d.log" % (len(state["evidence"]) + 1))
+        path = os.path.join(logs, "%02d.log" % (len([f for f in os.listdir(logs) if f.endswith(".log")]) + 1))
         with open(path, "w", encoding="utf-8") as f:
-            f.write("$ %s\n%s\n(종료 코드 %d)\n" % (args[1], tail, code))
+            f.write("$ %s\n%s\n(종료 코드 %d)\n" % (args[1], out.rstrip("\n"), code))
         state["evidence"].append({"criterion": args[0], "files": [path], "cmd": args[1], "code": code})
-        print(tail)
+        print(tail_of(out))
     elif cmd == "tried":
         state["tried"].append({"what": args[0], "files": need_files(args[1:])})
     elif cmd == "try-na":
@@ -195,7 +228,7 @@ def main(argv):
         sys.exit(__doc__)
     if cmd != "show":
         save(cwd, state)
-    print(show(state))
+    print(show(state, full="--full" in args))
 
 
 if __name__ == "__main__":
