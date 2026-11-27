@@ -404,6 +404,7 @@ class JobTest(unittest.TestCase):
 
     def test_stop_은_실수_기록에_한_줄_남긴다(self):
         path, env = self.own_log()
+        commit_and_switch(self.cwd, "feat/x")
         self.start()
         job(self.cwd, "pr", "https://github.com/o/r/pull/7")
         self.assertEqual(job(self.cwd, "stop", "같은 실패를 두 번 고쳐도 남는다", env=env).returncode, 0)
@@ -413,8 +414,7 @@ class JobTest(unittest.TestCase):
         self.assertEqual(row["source"], "stop")
         self.assertEqual(row["what"], "같은 실패를 두 번 고쳐도 남는다")
         self.assertEqual(row["pr"], "https://github.com/o/r/pull/7")
-        self.assertEqual(row["branch"], subprocess.run(["git", "branch", "--show-current"], cwd=self.cwd,
-                                                       capture_output=True, text=True).stdout.strip())
+        self.assertEqual(row["branch"], "feat/x")
         self.assertEqual(os.path.realpath(row["repo"]), os.path.realpath(self.cwd))
         self.assertEqual((row["key"], row["handled"]), ("", ""))
         self.assertRegex(row["time"], r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d")

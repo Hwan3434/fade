@@ -26,7 +26,7 @@ class MergeGateTest(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         return json.loads(r.stdout)["hookSpecificOutput"] if r.stdout.strip() else None
 
-    def complete(self):
+    def complete(self, door=True):
         job(self.cwd, "start", "작업")
         job(self.cwd, "red", "test -f done.txt")
         open(os.path.join(self.cwd, "done.txt"), "w").close()
@@ -36,7 +36,8 @@ class MergeGateTest(unittest.TestCase):
         job(self.cwd, "evidence", "기준", shot)
         job(self.cwd, "tried", "써 봄", shot)
         job(self.cwd, "review", "0")
-        job(self.cwd, "door", "two-way", "스크립트만 바뀐다")
+        if door:
+            job(self.cwd, "door", "two-way", "스크립트만 바뀐다")
 
     def head(self):
         return subprocess.run(["git", "rev-parse", "HEAD"], cwd=self.cwd, capture_output=True,
@@ -124,6 +125,12 @@ class MergeGateTest(unittest.TestCase):
         self.assertIsNone(self.gate("gh pr merge 3 --squash"))  # PR 을 못 찾음
         self.assertIsNone(self.gate("gh pr merge 3 --squash", head="0123456", head_exit=1))
         self.assertIsNone(self.gate("gh pr merge 3 --squash", head=""))  # 읽은 값이 비었다
+
+    def test_되돌릴_수_있는가_기록만_없어도_막는다(self):
+        self.complete(door=False)
+        out = self.gate("gh pr merge 3 --squash")
+        self.assertEqual(out["permissionDecision"], "deny")
+        self.assertIn("되돌릴 수 있는가", out["permissionDecisionReason"])
 
     def test_한쪽_문이면_막는다(self):
         self.complete()

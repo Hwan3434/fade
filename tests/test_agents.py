@@ -43,13 +43,13 @@ class AgentsTest(unittest.TestCase):
         meta, _ = self.agent("reviewer")
         self.assertEqual(tool_set(meta["tools"]), {"Read", "Grep", "Glob"})
 
-    def test_tester_는_sonnet_이고_파일을_고치는_도구가_없다(self):
+    def test_tester_는_sonnet_이고_편집_도구가_없다(self):
         meta, _ = self.agent("tester")
         self.assertEqual(meta["model"], "sonnet")
         self.assertNotIn("tools", meta)  # 브라우저·시뮬레이터 도구를 물려받아야 써 볼 수 있다
         self.assertTrue({"Edit", "Write", "NotebookEdit"} <= tool_set(meta["disallowedTools"]))
 
-    def test_hardener_는_파일을_고치는_도구가_없다(self):
+    def test_hardener_는_편집_도구가_없다(self):
         meta, _ = self.agent("hardener")
         self.assertFalse({"Edit", "Write", "NotebookEdit"} & tool_set(meta["tools"]))
 

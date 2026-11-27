@@ -74,6 +74,35 @@ class DestructiveGateTest(unittest.TestCase):
         self.assertBlocked("ls\nrm -rf ~")
         self.assertBlocked("echo $(rm -rf ~)")
 
+    def test_셸_예약어와_감싸는_명령_뒤의_명령도_본다(self):
+        repo = self.repo()
+        for command in ("if [ -d x ]; then rm -rf ~; fi", "if rm -rf ~; then echo; fi", "while true; do rm -rf /; done",
+                        "{ rm -rf ~; }", "! rm -rf ~", "env rm -rf ~", "env FOO=1 rm -rf ~", "command rm -rf ~",
+                        "time rm -rf /", "nohup rm -rf ~", "exec rm -rf ~", "sudo FOO=1 rm -rf /"):
+            self.assertBlocked(command)
+        self.assertBlocked("for b in x; do git push -f origin main; done", cwd=repo)
+        self.assertAllowed("if [ -d build ]; then rm -rf build; fi")
+        self.assertAllowed("for d in a b; do rm -rf ~/tmp/$d; done")
+
+    def test_같은_명령_안의_cd_를_따라간다(self):
+        self.assertBlocked("cd ~ && rm -rf *")
+        self.assertBlocked("cd && rm -rf .")
+        self.assertBlocked("cd /tmp; cd ~; rm -rf *")
+        self.assertAllowed("cd /tmp && rm -rf *")
+        self.assertAllowed("cd ~/projects && rm -rf build")
+
+    def test_끝_이름의_글롭은_그_폴더_안_전부로_본다(self):
+        self.assertBlocked("rm -rf ~/.*")
+        self.assertBlocked("rm -rf ~/.ssh/id_*")
+        self.assertAllowed("rm -rf ~/logs/*.log")
+        self.assertAllowed("rm -rf /tmp/x?")
+
+    def test_모든_브랜치를_force_로_올리면_막는다(self):
+        repo = self.repo()
+        for command in ("git push --mirror origin", "git push --all -f origin", "git push --force --branches origin"):
+            self.assertBlocked(command, cwd=repo)
+        self.assertAllowed("git push --all origin", cwd=repo)
+
     def test_주석은_그_줄_끝까지만_뺀다(self):
         self.assertBlocked("cd /tmp  # 설명\nrm -rf ~")  # 주석 뒤 줄바꿈이 사라지면 다음 줄이 앞 명령에 붙는다
         self.assertBlocked("echo a#b; rm -rf ~")  # 낱말 가운데의 # 는 주석이 아니다
