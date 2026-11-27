@@ -159,7 +159,7 @@ def repo_paths(cwd, paths):
         for one in dict.fromkeys((rel, real)):
             tracked = subprocess.run(["git", "ls-files", "--", one], cwd=top, capture_output=True, text=True).stdout
             if not tracked.strip():
-                sys.exit("git 이 추적하는 파일이 없는 경로다: " + p)
+                sys.exit("git 이 추적하는 파일이 없는 경로다: " + p + ("" if one == rel else " (링크가 가리키는 %s)" % one))
             out.append(one)
     need_clean(cwd, out)
     return out

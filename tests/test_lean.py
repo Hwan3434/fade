@@ -162,7 +162,19 @@ class EvidencePathsTest(Base):
     def test_추적하지_않는_파일을_숨기는_git_설정에서도_경로의_새_파일을_본다(self):
         subprocess.run(["git", "config", "status.showUntrackedFiles", "no"], cwd=self.cwd, check=True)
         open(os.path.join(self.cwd, "src", "new.py"), "w").close()
-        self.assertNotEqual(job(self.cwd, "log", "기준 1", "echo 1", "--paths", "src").returncode, 0)
+        r = job(self.cwd, "log", "기준 1", "echo 1", "--paths", "src")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("추적하지 않는 파일", r.stderr)
+        self.assertIn("src/new.py", r.stderr)
+
+    def test_링크가_가리키는_파일을_추적하지_않으면_그_자리를_알린다(self):
+        open(os.path.join(self.cwd, "tmp.py"), "w").close()
+        os.symlink("../tmp.py", os.path.join(self.cwd, "src", "link.py"))
+        subprocess.run(["git", "add", "src/link.py"], cwd=self.cwd, check=True)
+        subprocess.run(GIT + ["commit", "-q", "-m", "링크"], cwd=self.cwd, check=True)
+        r = job(self.cwd, "log", "기준 1", "echo 1", "--paths", "src/link.py")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("링크가 가리키는 tmp.py", r.stderr)
 
     def test_커밋을_모르는_옛_기록이_있어도_show_가_죽지_않는다(self):
         job(self.cwd, "log", "기준 1", "echo 1")
