@@ -274,6 +274,13 @@ class TextTest(unittest.TestCase):
         self.assertIn("--dropped", review)
         self.assertIn("bug.patch", review)
 
+    def test_CI_는_끝날_때까지_막고_기다리는_명령으로_본다(self):
+        # 앱의 PR 상태 도구는 알림으로 답해, 그것을 기다리며 앱 워커가 턴을 끝냈다(PR 25). gh pr checks --watch 는 앱에서도 막고 기다린다
+        pr = self.read("skills", "job", "stages", "pr.md")
+        step = [line for line in pr.splitlines() if line.startswith("4. CI 가 끝날 때까지")][0]
+        self.assertIn("gh pr checks <번호> --watch", step)
+        self.assertNotIn("PR 상태 도구로", step)
+
     def test_기다리는_명령으로_턴을_잇지_않는다(self):
         self.assertNotIn("기다리는 명령을 돌려 턴을 잇는다", self.read("skills", "job", "SKILL.md"))
 
