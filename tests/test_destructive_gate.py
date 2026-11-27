@@ -91,6 +91,26 @@ class DestructiveGateTest(unittest.TestCase):
         self.assertAllowed("cd " + self.cwd + " && rm -rf *")  # /tmp 는 CI 에서 가짜 홈의 위 폴더라 쓰지 않는다
         self.assertAllowed("cd ~/projects && rm -rf build")
 
+    def test_cd_에_리다이렉트가_붙어도_cd_의_첫_인자를_폴더로_본다(self):
+        for command in ("cd ~ >/dev/null 2>&1 && rm -rf *", "cd ~ 2>/dev/null && rm -rf .", "cd ~ > /dev/null; rm -rf .",
+                        "cd $HOME 2>&1 && rm -rf *", "cd ${HOME} >/dev/null && rm -rf .", "cd ~ 1>&2 && rm -rf *"):
+            self.assertBlocked(command)
+        self.assertAllowed("cd " + self.cwd + " >/dev/null 2>&1 && rm -rf *")
+
+    def test_폴더를_알_수_없는_cd_뒤에는_그_폴더째_지우는_삭제를_막는다(self):
+        # 셸 변수는 비어 있으면 cd 가 홈으로 가고, 없는 폴더로의 cd 가 실패하면 ; 뒤의 rm 은 앞 폴더에서 돈다
+        for command in ('cd "$WT" && rm -rf .', "cd $X && rm -rf *", 'cd "$WT"; rm -rf ..', "cd /no/such/dir; rm -rf .*",
+                        'cd "$WT" && rm -rf ./', 'cd "$WT" && rm -rf a/../..'):
+            self.assertBlocked(command)
+        for command in ('cd "$WT" && rm -rf .fade-review/parts', 'cd "$WT" && rm -rf build *.log',
+                        'cd "$WT" && rm -rf ' + os.path.join(self.cwd, "x"), "cd /no/such/dir && rm -f *"):
+            self.assertAllowed(command)
+
+    def test_삭제_훅은_병합_훅과_같은_명령_해석을_쓴다(self):
+        src = open(DESTRUCTIVE, encoding="utf-8").read()
+        self.assertIn("merge_gate.located(", src)
+        self.assertNotIn('name == "cd"', src)  # cd 를 따로 해석하면 두 훅이 다시 어긋난다
+
     def test_끝_이름의_글롭은_그_폴더_안_전부로_본다(self):
         self.assertBlocked("rm -rf ~/.*")
         self.assertBlocked("rm -rf ~/.[!.]*")
