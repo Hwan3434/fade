@@ -206,6 +206,31 @@ class PrFillTest(Base):
         self.assertEqual(mistakes(path)[0]["pr"], "https://github.com/o/r/pull/7")
 
 
+class LockTest(Base):
+    """실수 기록은 여러 세션이 함께 쓴다. 다시 쓰는 명령(pr, mark)은 붙이는 쪽과 같은 잠금을 잡아 그 사이 붙은 줄을 잃지 않는다."""
+
+    def test_pr_은_잠금을_기다리고_그_사이_붙은_줄을_지킨다(self):
+        import fcntl
+        path, env = self.own_log()
+        job(self.cwd, "slip", "review", "k", "이번", env=env)
+        with open(path + ".lock", "a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            p = subprocess.Popen([sys.executable, os.path.join(ROOT, "skills", "job", "job.py"), "pr",
+                                  "https://github.com/o/r/pull/7"], cwd=self.cwd, env=env, stdout=subprocess.PIPE,
+                                 stderr=subprocess.PIPE, text=True)
+            try:
+                p.wait(timeout=1.5)
+                self.fail("pr 이 잠금을 기다리지 않았다")
+            except subprocess.TimeoutExpired:
+                pass
+            with open(path, "a", encoding="utf-8") as f:  # 잠금을 잡은 다른 세션이 붙인 줄
+                f.write(json.dumps({"time": "2999-01-01T00:00:00+0000", "repo": "/elsewhere", "branch": "b", "pr": "",
+                                    "source": "ci", "what": "다른 세션", "key": "k", "handled": ""}) + "\n")
+        self.assertEqual(p.wait(timeout=30), 0, p.stderr.read())
+        self.assertEqual([(m["what"], m["pr"]) for m in mistakes(path)],
+                         [("이번", "https://github.com/o/r/pull/7"), ("다른 세션", "")])
+
+
 class TempFileTest(Base):
     """세션 임시 폴더의 화면·출력 파일은 지워질 수 있다. 레포 밖 임시 폴더의 파일은 증거로 받지 않는다."""
 
