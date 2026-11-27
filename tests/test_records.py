@@ -67,8 +67,8 @@ class MaskTest(Base):
         self.assertIn("/tmp/claude-501/-~--claude/x ~/y", out)
 
     def test_이름이_더_긴_다른_사용자는_건드리지_않는다(self):
-        out = self.show_with_home("/Users/ab", "-Users-abc-x")
-        self.assertIn("-Users-abc-x", out)
+        out = self.show_with_home("/Users/ab", "-Users-abc-x /Users/abc/y /Users/ab")
+        self.assertIn("-Users-abc-x /Users/abc/y ~", out)
 
 
 class TempRepoTest(Base):
