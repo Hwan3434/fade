@@ -5,7 +5,7 @@ import subprocess
 import sys
 import unittest
 
-from helpers import PERMISSION, commit_and_switch, commit_file, git_repo, job
+from helpers import GATE, PERMISSION, commit_and_switch, commit_file, git_repo, job
 from test_gaps import Repo, job_dir
 
 
@@ -27,6 +27,25 @@ class CrashTest(Repo):
     def test_없는_폴더의_git_조각이_훅을_죽이지_않는다(self):
         self.denied("cd /nonexistent/fade-x && git merge feat/x; gh pr merge 3", self.wt)
         self.denied("git -C /nonexistent/fade-x push origin HEAD:main; gh pr merge 3", self.wt)
+
+
+class RedirectNumberTest(Repo):
+    """리다이렉트에 붙은 숫자(2>&1 의 2)만 fd 번호다. 띄어 쓴 숫자(gh pr merge 3 >/dev/null 의 3)는 PR 번호로 남는다."""
+
+    def test_리다이렉트_앞에_띄어_쓴_PR_번호를_지우지_않는다(self):
+        # PR 3 을 물을 때만 브랜치를 답하는 gh. 번호 없이 물으면(지금 브랜치 main 의 PR) 아무것도 답하지 않는다
+        gh = os.path.join(self.bin.name, "gh")
+        with open(gh, "w") as f:
+            f.write("#!/bin/sh\ncase \"$*\" in\n  \"pr view 3 \"*headRefName*) echo feat/x ;;\nesac\nexit 0\n")
+        os.chmod(gh, 0o755)
+        env = dict(os.environ, PATH=self.bin.name + os.pathsep + os.environ["PATH"])
+        for command in ("gh pr merge 3 >/dev/null 2>&1", "gh pr merge 3 > log"):
+            payload = {"hook_event_name": "PreToolUse", "tool_name": "Bash", "cwd": self.main,
+                       "tool_input": {"command": command}}
+            r = subprocess.run([sys.executable, GATE], input=json.dumps(payload), capture_output=True, text=True, env=env)
+            # 메인 체크아웃에는 기록이 없어 PR 3 의 브랜치(feat/x)로 찾아야 막힌다
+            self.assertTrue(r.stdout.strip(), command)
+            self.assertEqual(json.loads(r.stdout)["hookSpecificOutput"]["permissionDecision"], "deny", command)
 
 
 class PrBranchFirstTest(Repo):
