@@ -216,6 +216,29 @@ class GateTest(unittest.TestCase):
         commit_file(self.cwd, "a.py", "a = 3\n", "고침")
         self.assertIn("review-files", self.denied())
 
+    def test_code_review_를_불렀는데_지시문의_머리_글을_못_찾으면_막지_않고_알린다(self):
+        # code-review 는 fade 밖의 스킬이라 머리 글이 바뀔 수 있다. 바뀌었다고 모든 리뷰를 막지 않는다
+        self.t.tool("Skill", {"skill": "code-review", "args": "medium %s" % self.patch})
+        self.t.prompt(MARKER.replace("—", "-"))
+        self.t.tool("Bash", {"command": "cat %s" % self.patch}, result=self.patch_text())
+        out = self.raw({"hook_event_name": "PreToolUse", "tool_name": "Bash", "cwd": self.cwd,
+                        "transcript_path": self.t.path, "tool_input": {"command": "job.py review 0 \"x\""}})
+        self.assertNotIn("permissionDecision", out.get("hookSpecificOutput", {}))
+        self.assertIn("머리 글", out["hookSpecificOutput"]["additionalContext"])
+        self.assertIn("머리 글", out["systemMessage"])
+
+    def test_사용자가_슬래시로_부른_code_review_도_부른_것으로_친다(self):
+        self.t.prompt("<command-name>/code-review</command-name>\n<command-args>medium bug.patch</command-args>")
+        self.t.prompt("바뀐 지시문")
+        out = self.raw({"hook_event_name": "PreToolUse", "tool_name": "Bash", "cwd": self.cwd,
+                        "transcript_path": self.t.path, "tool_input": {"command": "job.py review 0 \"x\""}})
+        self.assertIn("머리 글", out.get("systemMessage", ""))
+
+    def test_code_review_를_부르지도_않았으면_막는다(self):
+        self.t.tool("Skill", {"skill": "fade:try", "args": "x"})
+        self.t.prompt(MARKER.replace("—", "-"))
+        self.assertIn("code-review 가 돈 흔적이 없다", self.denied())
+
     def test_python3_로_부른_review_도_보고_review_files_와_다른_명령은_보지_않는다(self):
         self.denied("python3 /x/skills/job/job.py review 0 \"버그 축만\"")
         self.assertIsNone(self.gate("job.py review-files main"))
