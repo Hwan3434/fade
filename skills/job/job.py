@@ -606,6 +606,12 @@ def changed(cwd, *revs):
     return {n for n in r.stdout.split("\0") if n}
 
 
+def patch_file(header):
+    """`diff --git a/<옛 경로> b/<새 경로>` 머리의 새 경로. 리뷰 훅도 이것으로 bug.patch 의 줄이 든 파일을 가른다."""
+    rest = header[len("diff --git "):]
+    return rest.split(" b/", 1)[1] if " b/" in rest else rest
+
+
 def unreviewed(cwd, names):
     """레포가 .gitattributes 로 읽을 대상이 아니라고 표시한 파일: linguist-generated(GitHub 가 diff 에서 접는 생성 파일),
     -diff 와 binary(git 이 글로 비교하지 않는 파일). 표시는 작업 트리의 .gitattributes 에서 읽는다.
@@ -614,11 +620,32 @@ def unreviewed(cwd, names):
         return []
     r = subprocess.run(["git", "check-attr", "-z", "--stdin", "linguist-generated", "diff", "binary"], cwd=cwd,
                        input="\0".join(sorted(names)) + "\0", capture_output=True, text=True)
-    out = r.stdout.split("\0")
-    marked = {path for path, attr, value in zip(out[0::3], out[1::3], out[2::3])
-              if (attr, value) in (("linguist-generated", "set"), ("linguist-generated", "true"), ("diff", "unset"),
-                                   ("binary", "set"))}
-    return sorted(marked)
+    out, marked = r.stdout.split("\0"), {}
+    for path, attr, value in zip(out[0::3], out[1::3], out[2::3]):
+        mark = {("linguist-generated", "set"): "linguist-generated", ("linguist-generated", "true"): "linguist-generated",
+                ("diff", "unset"): "-diff", ("binary", "set"): "binary"}.get((attr, value))
+        if mark:
+            marked.setdefault(path, []).append(mark)
+    for path in [p for p, marks in marked.items() if "binary" in marks and "-diff" in marks]:  # binary 는 -diff 를 품는다
+        marked[path].remove("-diff")
+    return marked
+
+
+def line_counts(cwd, revs, paths):
+    """뺀 파일마다 더한 줄 + 뺀 줄. numstat 은 -diff 로 표시된 글 파일을 -a 로도 세지 않아, -a 로 만든 diff 본문을
+    센다. 이름 바꿈은 따지지 않아(--no-renames) 경로로 맞춘다."""
+    if not paths:
+        return {}
+    r = subprocess.run(["git", "diff", "-a", "--no-renames", *revs, "--"] + [":(top,literal)" + p for p in paths],
+                       cwd=cwd, capture_output=True, text=True, errors="replace")
+    counts, name = {}, None
+    for line in r.stdout.splitlines():
+        if line.startswith("diff --git "):
+            name = patch_file(line)
+            counts.setdefault(name, 0)
+        elif name and line[:1] in "+-" and not line.startswith(("+++ ", "--- ")):
+            counts[name] += 1
+    return counts
 
 
 def split_patch(text):
@@ -659,10 +686,6 @@ def review_files(cwd, state, base):
     bug = subprocess.run(["git", "diff", *bug_range, *keep], cwd=top, capture_output=True, text=True).stdout
     folder = os.path.join(top, ".fade-review")
     os.makedirs(folder, exist_ok=True)
-    for name, text in ((".gitignore", "*\n"), ("show.txt", show(state, cwd) + "\n"), ("diff.patch", r.stdout),
-                       ("bug.patch", bug)):
-        with open(os.path.join(folder, name), "w", encoding="utf-8") as f:
-            f.write(text)
     shutil.rmtree(os.path.join(folder, "parts"), ignore_errors=True)
     parts = []
     if len(bug) > PART_CHARS:
@@ -672,18 +695,25 @@ def review_files(cwd, state, base):
             with open(os.path.join(top, path), "w", encoding="utf-8") as f:
                 f.write(text)
             parts.append({"path": path, "lines": len(text.splitlines()),
-                          "files": re.findall(r"(?m)^diff --git a/.* b/(.*)$", text)})
-    counts = {row[2]: (int(row[0]) + int(row[1]) if row[0].isdigit() and row[1].isdigit() else None) for row in rows}
-    excluded = [[p, counts.get(p)] for p in skip]
+                          "files": [patch_file(l) for l in text.splitlines() if l.startswith("diff --git ")]})
+    texts = [p for p in skip if "binary" not in skip[p]]  # binary 는 줄로 셀 수 없다
+    counts = line_counts(top, [base + "...HEAD"], texts)
+    counts = dict(line_counts(top, bug_range, [p for p in texts if p not in counts]), **counts)
+    excluded = [[p, counts.get(p), skip[p]] for p in sorted(skip)]
     emptied = not bug.strip() and bool(bug_names & set(skip))
+    # show.txt 가 이번에 뺀 파일을 보이도록 기록을 먼저 바꾼 뒤 쓴다
     state["review_files"] = {"head": now, "dirty": dirty(cwd), "excluded": excluded, "emptied": emptied, "parts": parts}
+    for name, text in ((".gitignore", "*\n"), ("show.txt", show(state, cwd) + "\n"), ("diff.patch", r.stdout),
+                       ("bug.patch", bug)):
+        with open(os.path.join(folder, name), "w", encoding="utf-8") as f:
+            f.write(text)
     print("base 와의 diff: 파일 %d개, 더한 줄 %d + 뺀 줄 %d = %d줄" % (len(rows), added, removed, added + removed))
     print("diff.patch: " + ("고친 부분만(명세 리뷰어가 본 %s 뒤의 diff)" % short(since) if since else "전체(base 와의 diff)"))
     print("\n".join(stat.stdout.splitlines()))
     print("bug.patch: %d줄, %d자 (%s)" % (len(bug.splitlines()), len(bug),
                                        "앞 리뷰가 본 %s 뒤" % short(last) if last else "base 와의 전체"))
     if skip:
-        print("리뷰에서 뺀 파일(레포의 .gitattributes 가 linguist-generated, -diff, binary 로 표시함) %d개: %s"
+        print("리뷰에서 뺀 파일(레포의 .gitattributes 표시) %d개: %s"
               % (len(skip), ", ".join(excluded_text(excluded))))
     if emptied:
         print("bug.patch 가 비었다: 바뀐 파일이 모두 읽을 대상이 아니라고 표시돼 있다. 버그 축은 읽을 것이 없으니 "
@@ -697,7 +727,13 @@ def review_files(cwd, state, base):
 
 
 def excluded_text(excluded):
-    return ["%s(%s)" % (p, "%d줄" % n if n is not None else "바이너리") for p, n in excluded]
+    """뺀 파일마다 「경로(줄 수, 표시)」. 줄 수를 셀 수 없는 것(바이너리)은 줄 수를 빼고, 표시가 없던 옛 기록은 표시를 뺀다."""
+    out = []
+    for item in excluded:
+        path, count, marks = (list(item) + [[]])[:3]
+        what = (["%d줄" % count] if count is not None else []) + list(marks)
+        out.append("%s(%s)" % (path, ", ".join(what)) if what else path)
+    return out
 
 
 def minor_spec_head(cwd, prev, now):

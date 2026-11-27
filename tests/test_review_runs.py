@@ -234,6 +234,7 @@ class GateTest(unittest.TestCase):
         out = self.raw({"hook_event_name": "PreToolUse", "tool_name": "Bash", "cwd": self.cwd,
                         "transcript_path": self.t.path, "tool_input": {"command": "job.py review 0 \"x\""}})
         self.assertIn("머리 글", out.get("systemMessage", ""))
+        self.assertNotIn("permissionDecision", out.get("hookSpecificOutput", {}))
 
     def test_code_review_를_부르지도_않았으면_막는다(self):
         self.t.tool("Skill", {"skill": "fade:try", "args": "x"})
@@ -276,6 +277,24 @@ class GateTest(unittest.TestCase):
         self.assertIn("a.py: 11-15", reason)
         self.assertIn("code-review 로 마저 읽는다", reason)
         self.assertIn("본체", reason)  # 본체가 읽은 것은 치지 않는다는 것을 알린다
+
+    def test_조각을_부르지_않았으면_그_조각의_절대_경로와_원인을_알린다(self):
+        git = ["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid"]
+        big = "".join("value_%d = %d\n" % (i, i) for i in range(1500))
+        commit_file(self.cwd, "big1.py", big, "큰 파일 하나")
+        commit_file(self.cwd, "big2.py", big.replace("value", "other"), "큰 파일 둘")
+        r = job(self.cwd, "review-files", "main")
+        self.assertIn("parts/", r.stdout)
+        first = os.path.join(self.cwd, ".fade-review", "parts", "01.patch")
+        with open(first, encoding="utf-8") as f:
+            text = f.read()
+        self.t.prompt(MARKER)
+        self.t.tool("Bash", {"command": "cat " + first}, result=text)
+        reason = self.denied()
+        rest = [n for n in sorted(os.listdir(os.path.dirname(first))) if n != "01.patch"]
+        for name in rest:
+            self.assertIn("`medium %s`" % os.path.join(os.path.realpath(self.cwd), ".fade-review", "parts", name), reason)
+        self.assertIn("부르지 않은 것으로 보인다", reason)
 
     def test_CLI_에서_본체가_나머지를_읽은_것은_합에_치지_않는다(self):
         lines = self.patch_text().splitlines()
@@ -489,7 +508,22 @@ class ReviewFilesTest(unittest.TestCase):
         self.assertIn("b = 1", bug)
         self.assertIn(".gitattributes", bug)  # 표시 자체는 리뷰에 남는다
         self.assertIn("3\t0\tgen.txt", out)
-        self.assertIn("gen.txt(3줄)", job(self.cwd, "show").stdout)
+        self.assertIn("gen.txt(3줄, linguist-generated)", job(self.cwd, "show").stdout)
+
+    def test_linguist_generated_true_도_빠지고_표시가_남는다(self):
+        out, bug, _ = self.files("gen_txt linguist-generated=true\n".replace("_", "."), gen_txt="1\n")
+        self.assertNotIn("b/gen.txt", bug)
+        self.assertIn("gen.txt(1줄, linguist-generated)", out)
+
+    def test_diff_를_끈_글_파일도_줄_수가_남고_binary_는_바이너리로_남는다(self):
+        out, _, _ = self.files("lock_txt -diff\nimg_dat binary\n".replace("_", "."), lock_txt="x\ny\n", img_dat="\0\1")
+        self.assertIn("lock.txt(2줄, -diff)", out)
+        self.assertIn("img.dat(binary)", out)
+
+    def test_명세_리뷰어에게_주는_show_에_이번에_뺀_파일이_나온다(self):
+        self.files("gen_txt linguist-generated\n".replace("_", "."), gen_txt="1\n")
+        with open(os.path.join(self.cwd, ".fade-review", "show.txt"), encoding="utf-8") as f:
+            self.assertIn("gen.txt(1줄, linguist-generated)", f.read())
 
     def test_diff_를_끈_파일과_binary_도_빠진다(self):
         out, bug, _ = self.files("lock_txt -diff\nimg_dat binary\n".replace("_", "."), lock_txt="x\n", img_dat="y\n")

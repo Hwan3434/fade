@@ -164,20 +164,20 @@ def review_problem(state, wt, transcript):
     missing = [n for n, text in wanted.items() if text not in seen]
     if not missing:
         return None
-    return unread(lines, wanted, seen, missing, made.get("parts") or [])
+    return unread(lines, wanted, seen, missing, made.get("parts") or [], job.top_dir(wt))
 
 
 def file_of(lines):
-    """bug.patch 의 줄 번호마다 그 줄이 든 파일(diff --git 머리의 b/ 쪽 경로)."""
+    """bug.patch 의 줄 번호마다 그 줄이 든 파일(diff --git 머리의 b/ 쪽 경로). 조각을 쓰는 job.py 와 같은 해석을 쓴다."""
     out, name = {}, ""
     for i, line in enumerate(lines, 1):
         if line.startswith("diff --git "):
-            name = line.split(" b/", 1)[1] if " b/" in line else line[len("diff --git "):]
+            name = job.patch_file(line)
         out[i] = name
     return out
 
 
-def unread(lines, wanted, seen, missing, parts):
+def unread(lines, wanted, seen, missing, parts, top):
     """다 읽지 않았을 때 막는 이유: 보이지 않은 줄 범위와 그 파일, 원인으로 보이는 것, 마저 읽을 대상."""
     where = file_of(lines)
     by_file = {}
@@ -187,12 +187,16 @@ def unread(lines, wanted, seen, missing, parts):
     # 파일 머리는 보였는데 그 파일의 index 줄이나 hunk 머리가 없으면 다른 범위로 만든 diff 를 읽은 것이다
     headed = {where[n] for n, text in wanted.items() if text.startswith("diff --git ") and text in seen}
     other = any(where[n] in headed and wanted[n].startswith(("index ", "@@")) for n in missing)
-    cause = ("읽은 diff 가 bug.patch 와 범위가 다른 diff 로 보인다(파일 머리는 보였는데 index 줄이나 hunk 머리가 다르다). "
+    targets = [p for p in parts if set(p.get("files") or []) & set(by_file)]
+    # 조각의 파일 머리가 하나도 보이지 않았으면 그 조각을 부르지 않은 것이다
+    skipped = [p["path"] for p in targets if not set(p.get("files") or []) & headed]
+    cause = ("조각 %s 의 파일 머리가 한 번도 보이지 않았다. 그 조각을 code-review 로 부르지 않은 것으로 보인다"
+             % ", ".join(skipped) if skipped else
+             "읽은 diff 가 bug.patch 와 범위가 다른 diff 로 보인다(파일 머리는 보였는데 index 줄이나 hunk 머리가 다르다). "
              "git diff 를 따로 만들지 말고 bug.patch 를 읽는다" if other else
              "잘린 출력(토큰 한도, head)은 앞부분만 읽은 것이다")
-    targets = [p["path"] for p in parts if set(p.get("files") or []) & set(by_file)]
-    target = ("조각 " + ", ".join("`medium %s`" % t for t in targets) if targets else
-              "`medium .fade-review/bug.patch` 로 부르고 그 줄 범위를 읽는다")
+    target = ("조각 " + ", ".join("`medium %s`" % os.path.join(top, p["path"]) for p in targets) if targets else
+              "`medium %s` 로 부르고 그 줄 범위를 읽는다" % os.path.join(top, ".fade-review", "bug.patch"))
     return ("버그 축 리뷰가 bug.patch(%d줄)를 다 읽지 않았다. code-review 들이 받은 출력에 보이지 않은 줄(bug.patch 의 줄 "
             "번호): %s. %s. 그 범위를 code-review 로 마저 읽는다(%s). 나눠 부른 code-review 들의 출력은 합쳐 보지만, "
             "본체나 명세 리뷰어가 code-review 밖에서 읽은 것은 치지 않는다" % (len(lines), ranges, cause, target))
