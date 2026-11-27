@@ -27,8 +27,10 @@ def unattended_job(data):
     for key in ("file_path", "notebook_path", "path"):
         if isinstance(tool_input.get(key), str):
             path = os.path.join(cwd, tool_input[key])
-            places.append(path if os.path.isdir(path) else os.path.dirname(path))
-    for place in places + [cwd]:
+            while path and not os.path.isdir(path) and os.path.dirname(path) != path:
+                path = os.path.dirname(path)  # 아직 없는 폴더에 쓰는 Write 는 있는 가장 가까운 위 폴더로 찾는다
+            places.append(path)
+    for place in [p for p in places if p] + [cwd]:
         found = merge_gate.job_at(place, merged_too=True)
         if found and found[0].get("unattended"):
             return found
