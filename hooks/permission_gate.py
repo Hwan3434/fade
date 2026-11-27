@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """사람 없는 fade job 에서 승인 창이 뜨려 하면 기다리지 않고 거부한다.
 
-`job.py start --unattended` 로 시작한 작업의 브랜치에서만 판정한다. 그 밖의 세션이나 이 훅이 오류로 죽은
-경우에는 아무 판정도 내지 않고 평소처럼 승인 창이 뜬다. 막기만 하고 허용은 하지 않는다. 거부하면 실수 기록에 한 줄 남긴다.
+`job.py start --unattended` 로 시작한 작업의 브랜치에서만 판정한다. 기록은 세션의 현재 폴더만이 아니라
+명령이 가리키는 폴더(같은 명령 줄의 cd, git -C)와 파일 도구가 고치는 파일의 폴더에서도 찾는다.
+그 밖의 세션이나 이 훅이 오류로 죽은 경우에는 아무 판정도 내지 않고 평소처럼 승인 창이 뜬다. 막기만 하고 허용은 하지 않는다. 거부하면 실수 기록에 한 줄 남긴다.
 """
 import json
 import os
@@ -11,13 +12,31 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "skills", "job"))
 import job  # noqa: E402
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import merge_gate  # noqa: E402
+
+
+def unattended_job(data):
+    """승인 창을 띄우려는 일이 닿는 사람 없는 job 의 (기록, 워크트리). 없으면 None."""
+    cwd = data.get("cwd") or os.getcwd()
+    tool_input = data.get("tool_input") or {}
+    places = [here for here, _ in merge_gate.located(tool_input.get("command") or "", cwd)]
+    for key in ("file_path", "notebook_path", "path"):
+        if isinstance(tool_input.get(key), str):
+            places.append(os.path.dirname(os.path.join(cwd, tool_input[key])))
+    for place in places + [cwd]:
+        found = merge_gate.job_at(place, merged_too=True)
+        if found and found[0].get("unattended"):
+            return found
+    return None
+
 
 def main():
     data = json.load(sys.stdin)
-    cwd = data.get("cwd") or os.getcwd()
-    state = job.load(cwd)
-    if state is None or not state.get("unattended") or state.get("branch") != job.branch(cwd):
+    found = unattended_job(data)
+    if not found:
         return
+    state, cwd = found
     what = data.get("tool_name", "")
     command = (data.get("tool_input") or {}).get("command")
     if command:
