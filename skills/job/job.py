@@ -2,7 +2,8 @@
 """job 의 단계 기록. 병합 직전에 fade 훅(hooks/merge_gate.py)이 이 기록을 본다.
 
 기록은 작업 중인 워크트리의 git 폴더 안 fade-job.json 한 파일이다. 커밋되지 않고 워크트리와 함께 사라진다.
-병합 조건의 green, 증거, 써 보기, 리뷰는 지금 커밋에서 찍힌 것만 친다. 고친 커밋이 생기면 다시 한다.
+병합 조건의 green 과 리뷰는 지금 커밋에서 찍힌 것만 친다. 증거와 써 보기는 지금 커밋에서 찍혔거나,
+기대는 경로(--paths)를 적었고 찍은 커밋 뒤로 그 경로가 바뀌지 않았으면 친다. 낡은 것이 하나라도 남으면 막는다.
 실수 기록은 작업과 레포를 넘어 모이는 한 파일(~/.claude/fade/mistakes.jsonl, 환경 변수 FADE_MISTAKES 로 바꾼다)이다.
 stop 과 slip, 그리고 병합 훅과 승인 창 훅이 막을 때 한 줄씩 붙는다.
 
@@ -12,14 +13,22 @@ stop 과 slip, 그리고 병합 훅과 승인 창 훅이 막을 때 한 줄씩 �
   job.py red     <테스트 명령>           명령을 돌려 실패할 때만 기록한다 (구현 전)
   job.py green                           red 의 명령을 다시 돌려 통과할 때만 기록한다 (구현 후)
   job.py no-test <이유>                  레포에 테스트 실행 장치가 없을 때 red·green 대신 이유를 적는다
-  job.py evidence <완료 기준> <파일>...   스크린샷, 로그 같은 증거 파일을 기준에 붙인다
-  job.py log     <완료 기준> <명령>       명령을 돌려 출력 전체를 파일로 남기고 증거로 붙인다
-  job.py drop    <완료 기준>             그 기준에 붙인 증거를 모두 지운다 (다시 붙이기 전에)
-  job.py tried   <무엇을 어떻게> <파일>...  직접 써 본 기록과 그 화면·출력 파일
+  job.py evidence <완료 기준> <파일>... [--paths <경로>...]
+                                         스크린샷, 로그 같은 증거 파일을 기준에 붙인다
+  job.py log     <완료 기준> <명령> [--paths <경로>...]
+                                         명령을 돌려 출력 전체를 파일로 남기고 증거로 붙인다
+  job.py tried   <무엇을 어떻게> <파일>... [--paths <경로>...]
+                                         직접 써 본 기록과 그 화면·출력 파일
+                                         --paths 는 그 증거나 써 보기가 기대는 레포 안의 파일과 폴더다. 적으면 그 경로가
+                                         바뀌지 않는 동안 뒤 커밋에서도 유효하고, 적지 않으면 찍은 커밋에서만 유효하다.
+                                         같은 기준의 같은 명령(evidence 는 같은 파일, tried 는 같은 글)으로 다시 남기면 앞의 것을 바꾼다
+  job.py drop    <완료 기준> | --tried    그 기준에 붙인 증거를, --tried 면 써 보기를 모두 지운다
   job.py try-na  <이유>                  써 볼 화면도 명령도 없는 작업일 때
   job.py human   <사람이 볼 것>           사람만 판정할 수 있는 것이 남았을 때. 직접 써 보기를 대신하고, 병합을 막는다
-  job.py review-files <base>             명세 축 리뷰어에게 줄 show 출력과 base 와의 diff 를 워크트리 안
-                                         .fade-review/ (git 이 무시하는 폴더)에 쓴다. 계획서 원문은 부르는 쪽이 plan.md 로 쓴다
+  job.py review-files <base>             첫 줄에 base 와의 diff 줄 수(더한 줄 + 뺀 줄)와 돌릴 리뷰 축을 알린다. %d줄 미만이면
+                                         버그 축만, 이상이면 명세 리뷰어도 띄운다. 명세 축 리뷰어에게 줄 show 출력과 diff 를
+                                         워크트리 안 .fade-review/ (git 이 무시하는 폴더)에 쓴다. 앞 리뷰에서 명세 축이 돌았으면
+                                         그 커밋 뒤에 고친 부분만, 아니면 base 와의 전체를 쓴다. 계획서 원문은 부르는 쪽이 plan.md 로 쓴다
   job.py review  <남은 막는 지적 수> [<요약>]
                                          코드 리뷰 결과. 지금 커밋에서 남은 막는 지적이 0 이어야 병합한다
   job.py door    one-way|two-way <이유와 영향 범위>
@@ -32,7 +41,8 @@ stop 과 slip, 그리고 병합 훅과 승인 창 훅이 막을 때 한 줄씩 �
   job.py pr      <PR 주소>
   job.py check                           병합 조건을 본다. 빠진 것이 있으면 종료 코드 1
   job.py merged  <병합 커밋> [<base CI 결과>]
-  job.py show [--full]                   PR 본문과 보고에 붙일 기록. 첫 줄은 상태다. --full 이면 로그 파일 내용도 붙인다
+  job.py show [--full]                   기록. 첫 줄은 상태다. 기본은 완료 기준마다 한 줄(이름, 종료 코드, 커밋)이다.
+                                         --full 이면 명령 전문, 파일 경로, 로그 내용도 붙인다. PR 본문과 보고에는 --full 을 붙인다
 """
 import json
 import os
@@ -41,6 +51,8 @@ import sys
 import time
 
 TAIL = 40
+SPEC_REVIEW_LINES = 200  # base 와의 diff 가 이 줄 수 이상일 때만 명세 리뷰어를 띄운다
+__doc__ = __doc__ % SPEC_REVIEW_LINES
 
 
 def git_dir(cwd):
@@ -107,6 +119,89 @@ def where(cwd):
     return {"head": head(cwd), "dirty": dirty(cwd)}
 
 
+def top_dir(cwd):
+    r = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=cwd, capture_output=True, text=True)
+    return os.path.realpath(r.stdout.strip())
+
+
+def is_ancestor(cwd, old, new):
+    """old 가 new 의 조상(또는 같은 커밋)인가. rebase 나 amend 로 사라진 커밋, 없는 SHA 는 아니다."""
+    r = subprocess.run(["git", "merge-base", "--is-ancestor", old, new], cwd=cwd, capture_output=True, text=True)
+    return r.returncode == 0
+
+
+def split_paths(args):
+    """인자에서 --paths 뒤의 경로들을 떼어 (앞 인자, 경로)로 돌려준다. --paths 가 없으면 경로는 None."""
+    if "--paths" not in args:
+        return args, None
+    i = args.index("--paths")
+    if not i:
+        sys.exit(__doc__)
+    return args[:i], args[i + 1:]
+
+
+def repo_paths(cwd, paths):
+    """--paths 의 경로를 레포 기준으로 바꾼다. 늘 「안 바뀜」으로 읽힐 경로와, 찍는 지금 커밋과 다른 경로는 받지 않는다."""
+    if paths is None:
+        return []
+    if not paths:
+        sys.exit("--paths 뒤에 경로가 없다")
+    top, out = top_dir(cwd), []
+    for p in paths:
+        # 링크면 링크 자체와 링크가 가리키는 자리를 둘 다 적는다. 가리키는 곳이 바뀌는 것도, 그곳의 내용이 바뀌는 것도 변경이다
+        real = os.path.relpath(os.path.realpath(os.path.join(cwd, p)), top)
+        full = os.path.normpath(os.path.join(cwd, p))
+        rel = os.path.relpath(os.path.join(os.path.realpath(os.path.dirname(full)), os.path.basename(full)), top)
+        if any(r == ".." or r.startswith(".." + os.sep) for r in (real, rel)):
+            sys.exit("레포 밖의 경로다: " + p)
+        if "." in (rel, real) or not os.path.exists(os.path.join(top, rel)):
+            sys.exit("없는 경로다(레포 전체는 받지 않는다): " + p)
+        for one in dict.fromkeys((rel, real)):
+            tracked = subprocess.run(["git", "ls-files", "--", one], cwd=top, capture_output=True, text=True).stdout
+            if not tracked.strip():
+                sys.exit("git 이 추적하는 파일이 없는 경로다: " + p + ("" if one == rel else " (링크가 가리키는 %s)" % one))
+            out.append(one)
+    need_clean(cwd, out)
+    return out
+
+
+def need_clean(cwd, rels):
+    """레포 기준 경로들에 커밋 전 변경이나 추적하지 않는 파일이 있으면 받지 않는다. 찍은 내용이 지금 커밋과 달라서다."""
+    if not rels:
+        return
+    changed = subprocess.run(["git", "status", "--porcelain", "--untracked-files=all", "--", *rels], cwd=top_dir(cwd), capture_output=True,
+                             text=True).stdout
+    if changed.strip():
+        sys.exit("그 경로에 커밋 전 변경이나 추적하지 않는 파일이 있다. 커밋한 뒤 찍는다\n" + changed.rstrip())
+
+
+def holds(cwd, record, now):
+    """증거나 써 보기 하나가 지금 커밋에서 유효한가. 지금 커밋에서 찍혔거나, 기대는 경로를 적었고 찍은 커밋이
+    지금 커밋의 조상이며 그 뒤로 그 경로가 바뀌지 않았을 때다."""
+    if record.get("head") == now:
+        return True
+    if not record.get("paths") or not is_ancestor(cwd, record["head"], now):
+        return False
+    r = subprocess.run(["git", "diff", "--quiet", record["head"], now, "--", *record["paths"]], cwd=top_dir(cwd))
+    return r.returncode == 0
+
+
+def name_of(record):
+    """낡은 증거나 써 보기를 가리킬 짧은 이름."""
+    text = record.get("what") or record.get("cmd") or ", ".join(os.path.basename(f) for f in record["files"])
+    text = " ".join(text.split())  # 여러 줄 명령이 빠진 것 목록의 한 항목을 여러 줄로 가르지 않게 한다
+    return "`%s`" % (text if len(text) <= 80 else text[:77] + "...")
+
+
+def put(records, new, same):
+    """같은 것을 다시 남기면 앞의 것을 그 자리에서 바꾸고, 아니면 끝에 붙인다."""
+    for i, old in enumerate(records):
+        if all(old.get(k) == new.get(k) for k in same):
+            records[i] = new
+            return
+    records.append(new)
+
+
 def mistakes_path():
     return os.environ.get("FADE_MISTAKES") or os.path.expanduser("~/.claude/fade/mistakes.jsonl")
 
@@ -157,7 +252,8 @@ def status(state):
 
 
 def missing(state, cwd):
-    """병합을 막는 빠진 것들. 비어 있으면 병합해도 된다. green, 증거, 써 보기, 리뷰는 지금 커밋 것만 친다."""
+    """병합을 막는 빠진 것들. 비어 있으면 병합해도 된다. green 과 리뷰는 지금 커밋 것만 치고,
+    증거와 써 보기는 하나하나가 holds() 여야 한다. 유효한 것이 낡은 것을 가리지 않는다."""
     now = head(cwd)
     s = short(now)
     out = []
@@ -173,14 +269,17 @@ def missing(state, cwd):
     criteria = list(dict.fromkeys(e["criterion"] for e in state["evidence"]))
     if not criteria:
         out.append("증거: 완료 기준에 붙인 로그나 스크린샷이 없다")
+    stale = "%s. 찍은 뒤 기대는 경로가 바뀌었거나, 경로를 적지 않았는데 커밋이 바뀌었다. 마지막 커밋(%s)에서 같은 %s 다시 남긴다"
     for c in criteria:
-        if not any(e["criterion"] == c and e.get("head") == now for e in state["evidence"]):
-            out.append("증거: 「%s」를 마지막 커밋(%s)에서 다시 남기지 않았다" % (c, s))
+        old = [name_of(e) for e in state["evidence"] if e["criterion"] == c and not holds(cwd, e, now)]
+        if old:
+            out.append("증거: 「%s」의 낡은 증거 " % c + stale % (", ".join(old), s, "명령이나 파일로"))
     if not state["try_na"] and not state["human"]:
+        old = [name_of(t) for t in state["tried"] if not holds(cwd, t, now)]
         if not state["tried"]:
             out.append("직접 써 보기: 기록이 없다. 써 볼 것이 없는 작업이면 try-na, 지금 못 하면 human 으로 남긴다")
-        elif not any(t.get("head") == now for t in state["tried"]):
-            out.append("직접 써 보기: 마지막 커밋(%s)에서 다시 써 보지 않았다" % s)
+        elif old:
+            out.append("직접 써 보기: 낡은 기록 " + stale % (", ".join(old), s, "글로") + ". 더 하지 않을 것은 drop --tried 로 지운다")
     door = state.get("door")
     if not door:
         out.append("되돌릴 수 있는가: 기록이 없다. job.py door one-way|two-way \"<이유와 영향 범위>\" 로 남긴다")
@@ -198,21 +297,32 @@ def missing(state, cwd):
     return out
 
 
-def file_lines(files, full):
+def file_lines(files):
     out = []
     for f in files:
         out.append("    - " + f)
-        if full and f.endswith(".log") and os.path.isfile(f):
+        if f.endswith(".log") and os.path.isfile(f):
             with open(f, encoding="utf-8", errors="replace") as fh:
                 out += ["", "      ```text"] + ["      " + line for line in fh.read().splitlines()] + ["      ```", ""]
     return out
+
+
+def commits(records):
+    return ", ".join(dict.fromkeys(at(r) for r in records if r.get("head"))) or "모름"
+
+
+def detail(record):
+    """--full 에서 증거나 써 보기 하나에 붙이는 괄호들."""
+    return ((" (명령 `%s`, 종료 코드 %d)" % (record["cmd"], record["code"]) if record.get("cmd") else "")
+            + (" (커밋 %s)" % at(record) if record.get("head") else "")
+            + (" (기대는 경로 %s)" % ", ".join(record["paths"]) if record.get("paths") else ""))
 
 
 def show(state, cwd, full=False):
     lines = ["상태: " + status(state), "", "## 작업 기록 (fade job)", "", "- 작업: " + state["title"],
              "- 범위: " + ("PR 까지" if state["scope"] == "pr" else "병합까지")]
     if state.get("unattended"):
-        lines.append("- 사람 없음: 승인 창이 뜨면 기다리지 않고 거부되어 멈춘다")
+        lines.append("- 사람 없음: 승인 창이 뜨면 기다리지 않고 거부된다")
     if state.get("stopped"):
         lines.append("- 멈춤: " + state["stopped"])
     if state["no_test"]:
@@ -225,15 +335,18 @@ def show(state, cwd, full=False):
         lines.append("- 구현 후 통과(green, %s): `%s`" % (at(state["green"]), state["red"]["cmd"]))
     if state["evidence"]:
         lines.append("- 증거:")
-        for e in state["evidence"]:
-            lines.append("  - " + e["criterion"] + (" (명령 `%s`, 종료 코드 %d)" % (e["cmd"], e["code"]) if e.get("cmd") else "")
-                         + (" (커밋 %s)" % at(e) if e.get("head") else ""))
-            lines += file_lines(e["files"], full)
+        for e in state["evidence"] if full else []:
+            lines.append("  - " + e["criterion"] + detail(e))
+            lines += file_lines(e["files"])
+        for c in [] if full else dict.fromkeys(e["criterion"] for e in state["evidence"]):
+            group = [e for e in state["evidence"] if e["criterion"] == c]
+            codes = ", ".join(str(e["code"]) for e in group if e.get("cmd"))
+            lines.append("  - %s (증거 %d개%s, 커밋 %s)" % (c, len(group), ", 종료 코드 " + codes if codes else "", commits(group)))
     if state["tried"]:
         lines.append("- 직접 써 보기:")
         for t in state["tried"]:
-            lines.append("  - " + t["what"] + (" (커밋 %s)" % at(t) if t.get("head") else ""))
-            lines += file_lines(t["files"], full)
+            lines.append("  - " + t["what"] + (detail(t) if full else " (커밋 %s)" % commits([t])))
+            lines += file_lines(t["files"]) if full else []
     if state["try_na"]:
         lines.append("- 직접 써 보기: 해당 없음 — " + state["try_na"])
     for h in state["human"]:
@@ -258,15 +371,27 @@ def show(state, cwd, full=False):
 def review_files(cwd, state, base):
     """리뷰어는 읽기 도구만 있어 작업 폴더 밖을 읽으려면 승인이 필요하고, 데스크톱 앱은 파일 도구로 git 폴더에
     쓰는 것을 막는다. 그래서 워크트리 안에 두되, 안의 .gitignore 가 폴더째 git 에서 빼게 한다."""
-    r = subprocess.run(["git", "diff", base + "...HEAD"], cwd=cwd, capture_output=True, text=True)
-    if r.returncode != 0:
-        sys.exit("base 와의 diff 를 만들지 못했다: " + r.stderr.strip())
-    top = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=cwd, capture_output=True, text=True).stdout.strip()
-    folder = os.path.join(top, ".fade-review")
+    stat = subprocess.run(["git", "diff", "--numstat", base + "...HEAD"], cwd=cwd, capture_output=True, text=True)
+    if stat.returncode != 0:
+        sys.exit("base 와의 diff 를 만들지 못했다: " + stat.stderr.strip())
+    # 바이너리 파일은 줄 수가 - 로 나온다. 세지 않는다
+    added, removed = (sum(int(row.split("\t")[i]) for row in stat.stdout.splitlines() if row.split("\t")[i].isdigit())
+                      for i in (0, 1))
+    total, now, review = added + removed, head(cwd), state.get("review") or {}
+    spec = total >= SPEC_REVIEW_LINES
+    # 고친 부분만 주는 것은 명세 리뷰어가 앞 리뷰의 커밋까지를 실제로 본 경우뿐이다
+    since = review["head"] if review.get("spec") and is_ancestor(cwd, review["head"], now) else None
+    r = subprocess.run(["git", "diff", since, "HEAD"] if since else ["git", "diff", base + "...HEAD"], cwd=cwd,
+                       capture_output=True, text=True)
+    folder = os.path.join(top_dir(cwd), ".fade-review")
     os.makedirs(folder, exist_ok=True)
     for name, text in ((".gitignore", "*\n"), ("show.txt", show(state, cwd) + "\n"), ("diff.patch", r.stdout)):
         with open(os.path.join(folder, name), "w", encoding="utf-8") as f:
             f.write(text)
+    state["review_files"] = {"head": now, "dirty": dirty(cwd), "spec": spec}
+    print("base 와의 diff: 더한 줄 %d + 뺀 줄 %d = %d줄. " % (added, removed, total)
+          + ("%d줄 이상이라 버그 축과 함께 명세 리뷰어를 띄운다" if spec else "%d줄 미만이라 버그 축만 돌린다") % SPEC_REVIEW_LINES)
+    print("diff.patch: " + ("고친 부분만(앞 리뷰 %s 뒤의 diff)" % short(since) if since else "전체(base 와의 diff)"))
     return folder
 
 
@@ -329,23 +454,36 @@ def main(argv):
     elif cmd == "no-test":
         state["no_test"] = args[0]
     elif cmd == "evidence":
-        state["evidence"].append({"criterion": args[0], "files": need_files(args[1:]), **where(cwd)})
+        args, paths = split_paths(args)
+        put(state["evidence"], {"criterion": args[0], "files": need_files(args[1:]), "paths": repo_paths(cwd, paths),
+                                **where(cwd)}, ("criterion", "files"))
     elif cmd == "drop":
-        kept = [e for e in state["evidence"] if e["criterion"] != args[0]]
-        if len(kept) == len(state["evidence"]):
-            sys.exit("그 기준에 붙인 증거가 없다: " + args[0])
-        state["evidence"] = kept
+        if args[0] == "--tried":
+            state["tried"] = []
+        else:
+            kept = [e for e in state["evidence"] if e["criterion"] != args[0]]
+            if len(kept) == len(state["evidence"]):
+                sys.exit("그 기준에 붙인 증거가 없다: " + args[0])
+            state["evidence"] = kept
     elif cmd == "log":
+        args, paths = split_paths(args)
+        if len(args) < 2:
+            sys.exit(__doc__)
+        paths = repo_paths(cwd, paths)
         code, out = run(cwd, args[1])
+        need_clean(cwd, paths)  # 명령이 그 경로를 고쳤으면 지금 커밋의 내용으로 찍힌 증거가 아니다
         logs = os.path.join(git_dir(cwd), "fade-job-logs")
         os.makedirs(logs, exist_ok=True)
         path = os.path.join(logs, "%02d.log" % (len([f for f in os.listdir(logs) if f.endswith(".log")]) + 1))
         with open(path, "w", encoding="utf-8") as f:
             f.write("$ %s\n%s\n(종료 코드 %d)\n" % (args[1], out.rstrip("\n"), code))
-        state["evidence"].append({"criterion": args[0], "files": [path], "cmd": args[1], "code": code, **where(cwd)})
+        put(state["evidence"], {"criterion": args[0], "files": [path], "cmd": args[1], "code": code, "paths": paths,
+                                **where(cwd)}, ("criterion", "cmd"))
         print(tail_of(out))
     elif cmd == "tried":
-        state["tried"].append({"what": args[0], "files": need_files(args[1:]), **where(cwd)})
+        args, paths = split_paths(args)
+        put(state["tried"], {"what": args[0], "files": need_files(args[1:]), "paths": repo_paths(cwd, paths),
+                             **where(cwd)}, ("what",))
     elif cmd == "try-na":
         state["try_na"] = args[0]
     elif cmd == "human":
@@ -353,7 +491,10 @@ def main(argv):
     elif cmd == "review":
         if not args[0].isdigit():
             sys.exit("남은 막는 지적 수는 0 이상의 정수다")
-        state["review"] = {"left": int(args[0]), "note": " ".join(args[1:2]), **where(cwd)}
+        made = state.get("review_files") or {}
+        # 명세 리뷰어가 이 커밋까지 봤는가: 명세 축을 돌릴 크기였고, 리뷰 입력을 만든 뒤 커밋도 작업 트리도 바뀌지 않았다
+        spec = bool(made.get("spec")) and made.get("head") == head(cwd) and not made.get("dirty") and not dirty(cwd)
+        state["review"] = {"left": int(args[0]), "note": " ".join(args[1:2]), "spec": spec, **where(cwd)}
     elif cmd == "door":
         if args[0] not in ("one-way", "two-way") or not args[1].strip():
             sys.exit("job.py door one-way|two-way \"<이유와 영향 범위>\"")
@@ -372,6 +513,7 @@ def main(argv):
         state["merged"] = {"commit": args[0], "ci": args[1] if len(args) > 1 else ""}
     elif cmd == "review-files":
         folder = review_files(cwd, state, args[0])
+        save(cwd, state)
         print("%s 에 show.txt, diff.patch 를 썼다. 계획서 원문을 %s 로 쓰고 세 경로를 리뷰어에게 준다"
               % (folder, os.path.join(folder, "plan.md")))
         return

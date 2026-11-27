@@ -39,6 +39,17 @@ def commit_and_switch(cwd, branch):
     subprocess.run(["git", "switch", "-q", "-c", branch], cwd=cwd, check=True)
 
 
+def commit_file(cwd, name, text, message="수정"):
+    """파일 하나를 쓰고 그것만 담아 커밋한다."""
+    path = os.path.join(cwd, name)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(text)
+    subprocess.run(["git", "add", name], cwd=cwd, check=True)
+    subprocess.run(["git", "-c", "user.name=fade-test", "-c", "user.email=fade-test@example.invalid",
+                    "commit", "-q", "-m", message], cwd=cwd, check=True)
+
+
 def job(cwd, *args, env=None):
     return subprocess.run([sys.executable, JOB, *args], cwd=cwd, capture_output=True, text=True, env=env)
 

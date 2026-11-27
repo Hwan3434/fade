@@ -81,7 +81,7 @@ class JobTest(unittest.TestCase):
         self.start()
         r = job(self.cwd, "log", "기준 1", "echo 기대=3 실제=3")
         self.assertEqual(r.returncode, 0, r.stderr)
-        show = job(self.cwd, "show").stdout
+        show = job(self.cwd, "show", "--full").stdout
         self.assertIn("기준 1", show)
         log = [line for line in show.splitlines() if line.strip().endswith(".log")]
         self.assertTrue(log, show)
@@ -153,7 +153,7 @@ class JobTest(unittest.TestCase):
         self.commit()
         self.assertEqual(job(self.cwd, "green").returncode, 0)
         job(self.cwd, "evidence", "기준 1", self.shot())
-        job(self.cwd, "tried", "다시 눌러 봄", self.shot("try.png"))
+        job(self.cwd, "tried", "화면에서 눌러 봄", self.shot("try.png"))
         job(self.cwd, "review", "0")
         r = job(self.cwd, "check")
         self.assertEqual(r.returncode, 0, r.stdout)
@@ -165,7 +165,7 @@ class JobTest(unittest.TestCase):
         self.commit()
         job(self.cwd, "green")
         job(self.cwd, "evidence", "기준 1", self.shot())
-        job(self.cwd, "tried", "다시 눌러 봄", self.shot("try.png"))
+        job(self.cwd, "tried", "화면에서 눌러 봄", self.shot("try.png"))
         job(self.cwd, "review", "0")
         out = job(self.cwd, "check").stdout
         self.assertIn("기준 2", out)
@@ -261,7 +261,8 @@ class JobTest(unittest.TestCase):
         self.start()
         job(self.cwd, "evidence", "기준 A", self.shot())
         job(self.cwd, "log", "기준 B", "seq 1 60")
-        path = [line.strip()[2:] for line in job(self.cwd, "show").stdout.splitlines() if line.strip().endswith(".log")][0]
+        path = [line.strip()[2:] for line in job(self.cwd, "show", "--full").stdout.splitlines()
+                if line.strip().endswith(".log")][0]
         self.assertTrue(path.endswith("01.log"), path)
         text = open(path, encoding="utf-8").read()
         self.assertIn("\n1\n", text)
@@ -274,7 +275,7 @@ class JobTest(unittest.TestCase):
         open(shot, "w").close()
         self.start()
         job(self.cwd, "evidence", "기준", shot)
-        r = subprocess.run([sys.executable, JOB, "show"], cwd=self.cwd, capture_output=True, text=True,
+        r = subprocess.run([sys.executable, JOB, "show", "--full"], cwd=self.cwd, capture_output=True, text=True,
                            env=dict(os.environ, HOME=home))
         self.assertIn("~/s.png", r.stdout)
         self.assertNotIn(home, r.stdout)
@@ -282,7 +283,7 @@ class JobTest(unittest.TestCase):
     def test_증거마다_찍은_커밋을_적는다(self):
         self.start()
         job(self.cwd, "evidence", "기준", self.shot())
-        self.assertIn("(커밋 없음", job(self.cwd, "show").stdout)
+        self.assertIn("커밋 없음", job(self.cwd, "show").stdout)
 
     def test_show_full_은_로그_내용을_붙인다(self):
         self.start()
