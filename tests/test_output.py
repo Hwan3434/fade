@@ -66,8 +66,8 @@ class RecordOutputTest(unittest.TestCase):
 
     def test_log_는_성공하면_명령_출력을_찍지_않고_종료_코드와_로그_경로만_알린다(self):
         self.short("start", "작업")
-        out = self.short("log", "기준", "seq 1 60")
-        self.assertNotIn("60", out.replace("01.log", ""))
+        out = self.short("log", "기준", "seq 1 60 | sed s/^/줄=/")
+        self.assertNotIn("줄=60", out)  # 명령 글이 아니라 출력에만 나오는 글자
         self.assertIn("종료 코드 0", out)
         self.assertIn("01.log", out)
 
@@ -180,14 +180,15 @@ class NonstopOutputTest(unittest.TestCase):
         return subprocess.run([sys.executable, NONSTOP, *args], capture_output=True, text=True, env=env)
 
     def test_기록_명령은_보고_전체를_찍지_않고_무엇을_했는지와_다음_작업만_알린다(self):
-        for args in (("init", "s1", "가", "나", "다"), ("add", "s1", "라"),
-                     ("set", "s1", "1", "done", "https://github.com/o/r/pull/3"), ("decide", "s1", "2", "권장안으로 정함")):
+        for args, after in ((("init", "s1", "가", "나", "다"), "다음: 1. 가"), (("add", "s1", "라"), "다음: 1. 가"),
+                            (("set", "s1", "1", "done", "https://github.com/o/r/pull/3"), "다음: 2. 나"),
+                            (("decide", "s1", "2", "권장안으로 정함"), "다음: 2. 나")):
             r = self.run_cmd(*args)
             self.assertEqual(r.returncode, 0, (args, r.stderr))
             self.assertLessEqual(len(r.stdout.splitlines()), 2, (args, r.stdout))
             self.assertNotIn("## ", r.stdout, args)
             self.assertNotIn("PR 1개", r.stdout, args)
-            self.assertIn("다음: 2. 나", r.stdout, args)
+            self.assertIn(after, r.stdout, args)
 
     def test_show_는_보고_전체를_찍는다(self):
         self.run_cmd("init", "s1", "가")

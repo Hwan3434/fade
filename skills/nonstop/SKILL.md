@@ -8,7 +8,7 @@ disable-model-invocation: true
 
 지켜보는 사람이 없다. 받은 작업을 할 수 있는 데까지 끝내 놓는 것이 목적이다. 한 작업이 막혀도 나머지는 계속한다.
 
-작업 목록은 이 스킬 폴더의 `nonstop.py` 로만 다룬다. 아래 명령의 `<세션>` 자리에는 이 대화를 가리키는 고유한 이름을 넣는다. 환경이 대화 ID 를 주면 그것을 쓴다.
+작업 목록은 `nonstop.py` 로만 다룬다. `nonstop.py` 는 PATH 에 있는 명령이다(플러그인의 `bin/`). 경로를 붙이지 않고 부른다. `command -v nonstop.py` 가 아무것도 내지 않으면 `python3 "${CLAUDE_SKILL_DIR}/nonstop.py"` 를 매번 그대로 쓰고, 셸 변수에 담지 않는다. `init`, `add`, `set`, `decide` 는 한 일과 남은 작업 한 줄만 찍고, 목록 전체는 `nonstop.py show <세션>` 에서만 나온다. 아래 명령의 `<세션>` 자리에는 이 대화를 가리키는 고유한 이름을 넣는다. 환경이 대화 ID 를 주면 그것을 쓴다.
 
 ## 순서
 
