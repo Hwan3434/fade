@@ -161,8 +161,12 @@ def tail_of(text):
 
 def pending(cwd):
     """커밋 전 변경이 있거나 추적하지 않는 파일(레포 기준 경로)과 그 내용의 해시(지워졌으면 빈 글)."""
-    tracked = subprocess.run(["git", "diff", "--name-only", "HEAD"], cwd=top_dir(cwd), capture_output=True, text=True).stdout
-    return contents(cwd, sorted(set(tracked.split("\n") + untracked(cwd)) - {""}))
+    return contents(cwd, sorted(set(names(cwd, "diff", "--name-only", "HEAD") + untracked(cwd)) - {""}))
+
+
+def names(cwd, *args):
+    """git 이 내는 파일 이름들. -z 로 받아 한글 같은 이름이 따옴표와 8진수로 감싸이지 않게 한다."""
+    return subprocess.run(["git", *args, "-z"], cwd=top_dir(cwd), capture_output=True, text=True).stdout.split("\0")
 
 
 def contents(cwd, rels):
@@ -176,8 +180,7 @@ def contents(cwd, rels):
 
 
 def untracked(cwd):
-    return subprocess.run(["git", "ls-files", "--others", "--exclude-standard"], cwd=top_dir(cwd), capture_output=True,
-                          text=True).stdout.split("\n")
+    return names(cwd, "ls-files", "--others", "--exclude-standard")
 
 
 def changed_since(cwd, red):
@@ -186,9 +189,7 @@ def changed_since(cwd, red):
     if red["head"] == "(커밋 없음)" or not is_ancestor(cwd, red["head"], "HEAD"):
         return None
     before = red.get("pending") or {}
-    tracked = subprocess.run(["git", "diff", "--name-only", red["head"]], cwd=top_dir(cwd), capture_output=True,
-                             text=True).stdout.split("\n")
-    now = contents(cwd, sorted(set(tracked + untracked(cwd)) - {""}))
+    now = contents(cwd, sorted(set(names(cwd, "diff", "--name-only", red["head"]) + untracked(cwd)) - {""}))
     return [p for p in now if p not in before or now[p] != before[p]]
 
 
