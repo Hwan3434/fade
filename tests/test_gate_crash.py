@@ -44,6 +44,41 @@ class CrashTest(Repo):
         self.denied("git -C /nonexistent/fade-x push origin HEAD:main; gh pr merge 3", self.wt)
 
 
+class ParseTest(Repo):
+    """따옴표로 묶은 글자는 리다이렉트도 명령 구분도 아니다. 리다이렉트에 붙은 fd 번호는 인자가 아니다.
+    따옴표 친 heredoc 의 끝 글에 - 나 . 이 있어도 본문은 명령이 아니다."""
+
+    def seg(self, command, cwd=None):
+        import merge_gate
+        return [seg for _, seg in merge_gate.located(command, cwd or self.main)]
+
+    def test_따옴표로_묶은_리다이렉트_글자는_인자로_남는다(self):
+        import merge_gate
+        self.assertEqual(self.seg('git merge -m ">" feat/x'), [["git", "merge", "-m", ">", "feat/x"]])
+        self.denied('git merge -m ">" feat/x', self.main)
+        self.denied("git merge -m '>>' feat/x", self.main)
+        merge = self.seg('gh pr merge --body ">" 3')[0]
+        self.assertEqual(merge_gate.pr_target(merge[3:]), (["3"], []))
+        self.assertEqual(self.seg('git commit -m "a;b|c&d" && echo x'), [["git", "commit", "-m", "a;b|c&d"], ["echo", "x"]])
+
+    def test_리다이렉트에_붙은_fd_번호는_PR_번호가_아니다(self):
+        import merge_gate
+        segs = self.seg("gh pr merge --squash 2>&1 | tail -1")
+        self.assertEqual(segs[0], ["gh", "pr", "merge", "--squash"])
+        self.assertEqual(merge_gate.pr_target(segs[0][3:]), ([], []))
+
+    def test_폴더를_몰라도_base_를_적은_push_는_세션_폴더의_기록으로_본다(self):
+        self.denied("cd /nonexistent/fade-x; git push origin HEAD:main", self.wt)
+        self.denied('cd "$WT" && git push origin HEAD:refs/heads/main', self.wt)
+        self.assertIsNone(self.gate("cd /nonexistent/fade-x; git push origin HEAD", self.wt))
+
+    def test_따옴표_친_heredoc_의_끝_글에_하이픈이나_점이_있어도_본문은_명령이_아니다(self):
+        for command in ("cat > n.md <<'END-NOTES'\ngit merge feat/x\nEND-NOTES",
+                        'cat > n.md << "A.B"\ngit merge feat/x\nA.B', "cat > n.md <<-'X-1'\n\tgit merge feat/x\n\tX-1"):
+            self.assertIsNone(self.gate(command, self.main), command)
+        self.denied("cat > n.md <<'END-NOTES'\nbody\nEND-NOTES\ngit merge feat/x", self.main)
+
+
 class RedirectNumberTest(Repo):
     """리다이렉트에 붙은 숫자(2>&1 의 2)만 fd 번호다. 띄어 쓴 숫자(gh pr merge 3 >/dev/null 의 3)는 PR 번호로 남는다."""
 
