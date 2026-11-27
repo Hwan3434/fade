@@ -171,7 +171,10 @@ def main():
             continue
         print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
                                                  "permissionDecisionReason": problem}}, ensure_ascii=False), flush=True)
-        job.add_mistake(wt, state, "gate", "리뷰를 남기려 했으나 막힘: " + problem)  # 판정을 먼저 내보내 기록이 실패해도 막는다
+        try:  # 판정을 먼저 내보냈으니 기록이 실패해도 막는다. 다른 JSON 을 더 찍지 않는다
+            job.add_mistake(wt, state, "gate", "리뷰를 남기려 했으나 막힘: " + problem)
+        except Exception as e:
+            print("fade review_gate: 실수 기록에 쓰지 못했다: %s" % e, file=sys.stderr)
         return
 
 
