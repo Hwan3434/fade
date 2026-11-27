@@ -484,8 +484,8 @@ class ReviewFilesTest(unittest.TestCase):
 
     def test_linguist_generated_로_표시된_파일은_빠지고_이름과_줄_수가_남는다(self):
         out, bug, spec = self.files("gen_txt linguist-generated\n".replace("_", "."), gen_txt="1\n2\n3\n", b_py="b = 1\n")
-        self.assertNotIn("gen.txt", bug)
-        self.assertNotIn("gen.txt", spec)
+        self.assertNotIn("b/gen.txt", bug)
+        self.assertNotIn("b/gen.txt", spec)
         self.assertIn("b = 1", bug)
         self.assertIn(".gitattributes", bug)  # 표시 자체는 리뷰에 남는다
         self.assertIn("3\t0\tgen.txt", out)
@@ -493,13 +493,13 @@ class ReviewFilesTest(unittest.TestCase):
 
     def test_diff_를_끈_파일과_binary_도_빠진다(self):
         out, bug, _ = self.files("lock_txt -diff\nimg_dat binary\n".replace("_", "."), lock_txt="x\n", img_dat="y\n")
-        self.assertNotIn("lock.txt", bug)
-        self.assertNotIn("img.dat", bug)
+        self.assertNotIn("b/lock.txt", bug)
+        self.assertNotIn("b/img.dat", bug)
 
     def test_표시가_없거나_false_면_빠지지_않는다(self):
         out, bug, _ = self.files("gen_txt linguist-generated=false\n".replace("_", "."), gen_txt="1\n", other_txt="2\n")
-        self.assertIn("gen.txt", bug)
-        self.assertIn("other.txt", bug)
+        self.assertIn("b/gen.txt", bug)
+        self.assertIn("b/other.txt", bug)
         self.assertNotIn("뺀 파일", out)
 
     def test_bug_patch_의_줄_수를_알린다(self):

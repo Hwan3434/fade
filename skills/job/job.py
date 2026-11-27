@@ -82,6 +82,7 @@ import fcntl
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -578,6 +579,9 @@ def show(state, cwd, full=False):
     door = state.get("door")
     if door:
         lines.append("- 되돌릴 수 있는가: %s — %s" % ("한쪽 문" if door["kind"] == "one-way" else "양쪽 문", door["why"]))
+    skipped = (state.get("review_files") or {}).get("excluded")
+    if skipped:
+        lines.append("- 리뷰에서 뺀 파일(레포의 .gitattributes 표시): " + ", ".join(excluded_text(skipped)))
     review = state.get("review")
     if review:
         lines.append("- 리뷰(%s%s): 남은 막는 지적 %d개%s%s" % (
@@ -592,11 +596,46 @@ def show(state, cwd, full=False):
     return mask("\n".join(lines))
 
 
+PART_CHARS = 20000  # bug.patch 를 조각으로 나누는 크기. Bash 도구가 출력을 통째로 보여 주는 한도(약 30000자) 아래다
+
+
+def changed(cwd, *revs):
+    r = subprocess.run(["git", "diff", "--name-only", "-z", "--no-renames", *revs], cwd=cwd, capture_output=True, text=True)
+    return {n for n in r.stdout.split("\0") if n}
+
+
+def unreviewed(cwd, names):
+    """레포가 .gitattributes 로 읽을 대상이 아니라고 표시한 파일: linguist-generated(GitHub 가 diff 에서 접는 생성 파일),
+    -diff 와 binary(git 이 글로 비교하지 않는 파일). 표시는 작업 트리의 .gitattributes 에서 읽는다.
+    fade 는 파일 이름이나 확장자 목록을 갖지 않는다. 표시가 없으면 빼지 않는다."""
+    if not names:
+        return []
+    r = subprocess.run(["git", "check-attr", "-z", "--stdin", "linguist-generated", "diff", "binary"], cwd=cwd,
+                       input="\0".join(sorted(names)) + "\0", capture_output=True, text=True)
+    out = r.stdout.split("\0")
+    marked = {path for path, attr, value in zip(out[0::3], out[1::3], out[2::3])
+              if (attr, value) in (("linguist-generated", "set"), ("linguist-generated", "true"), ("diff", "unset"),
+                                   ("binary", "set"))}
+    return sorted(marked)
+
+
+def split_patch(text):
+    """bug.patch 를 파일 경계에서 나눠 조각마다 PART_CHARS 를 넘지 않게 묶는다. 한 파일이 그보다 크면 그 파일 하나가 한 조각이다."""
+    files, parts = re.split(r"(?m)^(?=diff --git )", text), []
+    for chunk in (f for f in files if f):
+        if parts and len(parts[-1]) + len(chunk) <= PART_CHARS:
+            parts[-1] += chunk
+        else:
+            parts.append(chunk)
+    return parts
+
+
 def review_files(cwd, state, base):
     """리뷰어는 읽기 도구만 있어 작업 폴더 밖을 읽으려면 승인이 필요하고, 데스크톱 앱은 파일 도구로 git 폴더에
     쓰는 것을 막는다. 그래서 워크트리 안에 두되, 안의 .gitignore 가 폴더째 git 에서 빼게 한다.
     명세 리뷰어를 띄울지는 정하지 않는다. 부르는 쪽이 판단하도록 크기와 바뀐 파일만 알린다."""
-    stat = subprocess.run(["git", "diff", "--numstat", base + "...HEAD"], cwd=cwd, capture_output=True, text=True)
+    top = top_dir(cwd)
+    stat = subprocess.run(["git", "diff", "--numstat", base + "...HEAD"], cwd=top, capture_output=True, text=True)
     if stat.returncode != 0:
         sys.exit("base 와의 diff 를 만들지 못했다: " + stat.stderr.strip())
     rows = [row.split("\t", 2) for row in stat.stdout.splitlines()]
@@ -606,24 +645,57 @@ def review_files(cwd, state, base):
     # 고친 부분만 주는 것은 명세 리뷰어가 실제로 본 커밋이 남아 있는 경우뿐이다
     since = review.get("spec_head")
     since = since if since and is_ancestor(cwd, since, now) else None
-    r = subprocess.run(["git", "diff", since, "HEAD"] if since else ["git", "diff", base + "...HEAD"], cwd=cwd,
-                       capture_output=True, text=True)
+    spec_range = [since, "HEAD"] if since else [base + "...HEAD"]
     # 버그 축은 앞 리뷰(받은 것)가 본 커밋 뒤를, 앞 리뷰가 없거나 그 커밋이 사라졌으면 base 와의 전체를 본다
     last = review.get("head")
     last = last if last and is_ancestor(cwd, last, now) else None
-    bug = subprocess.run(["git", "diff", last, "HEAD"] if last else ["git", "diff", base + "...HEAD"], cwd=cwd,
-                         capture_output=True, text=True)
-    folder = os.path.join(top_dir(cwd), ".fade-review")
+    bug_range = [last, "HEAD"] if last else [base + "...HEAD"]
+    bug_names = changed(top, *bug_range)
+    skip = unreviewed(top, changed(top, base + "...HEAD") | changed(top, *spec_range) | bug_names)
+    keep = ["--", ":/"] + [":(top,literal,exclude)" + p for p in skip]
+    r = subprocess.run(["git", "diff", *spec_range, *keep], cwd=top, capture_output=True, text=True)
+    bug = subprocess.run(["git", "diff", *bug_range, *keep], cwd=top, capture_output=True, text=True).stdout
+    folder = os.path.join(top, ".fade-review")
     os.makedirs(folder, exist_ok=True)
     for name, text in ((".gitignore", "*\n"), ("show.txt", show(state, cwd) + "\n"), ("diff.patch", r.stdout),
-                       ("bug.patch", bug.stdout)):
+                       ("bug.patch", bug)):
         with open(os.path.join(folder, name), "w", encoding="utf-8") as f:
             f.write(text)
-    state["review_files"] = {"head": now, "dirty": dirty(cwd)}
+    shutil.rmtree(os.path.join(folder, "parts"), ignore_errors=True)
+    parts = []
+    if len(bug) > PART_CHARS:
+        os.makedirs(os.path.join(folder, "parts"))
+        for i, text in enumerate(split_patch(bug), 1):
+            path = os.path.join(".fade-review", "parts", "%02d.patch" % i)
+            with open(os.path.join(top, path), "w", encoding="utf-8") as f:
+                f.write(text)
+            parts.append({"path": path, "lines": len(text.splitlines()),
+                          "files": re.findall(r"(?m)^diff --git a/.* b/(.*)$", text)})
+    counts = {row[2]: (int(row[0]) + int(row[1]) if row[0].isdigit() and row[1].isdigit() else None) for row in rows}
+    excluded = [[p, counts.get(p)] for p in skip]
+    emptied = not bug.strip() and bool(bug_names & set(skip))
+    state["review_files"] = {"head": now, "dirty": dirty(cwd), "excluded": excluded, "emptied": emptied, "parts": parts}
     print("base 와의 diff: 파일 %d개, 더한 줄 %d + 뺀 줄 %d = %d줄" % (len(rows), added, removed, added + removed))
     print("diff.patch: " + ("고친 부분만(명세 리뷰어가 본 %s 뒤의 diff)" % short(since) if since else "전체(base 와의 diff)"))
     print("\n".join(stat.stdout.splitlines()))
+    print("bug.patch: %d줄, %d자 (%s)" % (len(bug.splitlines()), len(bug),
+                                       "앞 리뷰가 본 %s 뒤" % short(last) if last else "base 와의 전체"))
+    if skip:
+        print("리뷰에서 뺀 파일(레포의 .gitattributes 가 linguist-generated, -diff, binary 로 표시함) %d개: %s"
+              % (len(skip), ", ".join(excluded_text(excluded))))
+    if emptied:
+        print("bug.patch 가 비었다: 바뀐 파일이 모두 읽을 대상이 아니라고 표시돼 있다. 버그 축은 읽을 것이 없으니 "
+              "code-review 를 부르지 않고 그 사실을 리뷰 요약에 적어 남긴다. 명세 리뷰어는 diff.patch 로 본다")
+    if parts:
+        print("bug.patch 가 %d자를 넘어 파일 단위 조각 %d개로도 썼다. 조각마다 code-review 를 부른다(`medium <조각 경로>`):"
+              % (PART_CHARS, len(parts)))
+        for p in parts:
+            print("  %s: %d줄, %s" % (p["path"], p["lines"], ", ".join(p["files"])))
     return folder
+
+
+def excluded_text(excluded):
+    return ["%s(%s)" % (p, "%d줄" % n if n is not None else "바이너리") for p, n in excluded]
 
 
 def minor_spec_head(cwd, prev, now):
