@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""gh pr merge 직전에 job 기록과 CI 를 본다.
+"""gh pr merge 직전에 job 기록, CI, PR 의 최신 커밋을 본다. 막으면 실수 기록에 한 줄 남긴다.
 
 job 기록이 있는 워크트리에서만 판정한다. 기록이 없는 곳이나 이 훅이 오류로 죽은 경우에는
 아무 판정도 내지 않고 Claude 의 평소 권한 흐름으로 넘긴다. 실수를 막는 난간이지 보안 경계가 아니다.
 """
 import json
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -13,28 +14,73 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "skills", "job"))
 import job  # noqa: E402
 
-CONTROL = set(";&|()")
+PUNCTUATION = ";&|()<>\n"
+CONTROL = set(";&|()\n")  # 명령을 나누는 글자. < > 는 리다이렉트라 나누지 않는다
+HEREDOC = re.compile(r"(?<!<)<<-?\s*(['\"]?)([A-Za-z_]\w*)\1")
 
 
-def merge_segments(command):
-    """명령 줄에서 실제로 실행될 `gh pr merge ...` 조각들을 돌려준다. 인용된 글자는 명령으로 치지 않는다."""
-    lex = shlex.shlex(command, posix=True, punctuation_chars=True)
+def without_heredoc_bodies(command):
+    """heredoc 본문 줄을 뺀다. 줄마다 명령으로 읽으니, 파일에 쓰는 글이 명령으로 읽히지 않게 한다."""
+    out, end = [], None
+    for line in command.replace("\\\n", " ").split("\n"):
+        if end is not None:
+            if line.strip() == end:
+                end = None
+            continue
+        out.append(line)
+        m = HEREDOC.search(line)
+        if m:
+            end = m.group(2)
+    return "\n".join(out)
+
+
+def without_comments(command):
+    """따옴표 밖에서 낱말 첫머리의 # 부터 그 줄 끝까지를 뺀다. 줄바꿈은 남겨 다음 줄을 새 명령으로 읽게 한다.
+    shlex 의 주석 처리는 줄바꿈까지 먹어 다음 줄을 앞 명령에 붙이고, 낱말 가운데의 # 도 주석으로 읽어 쓰지 않는다."""
+    out, quote, prev, i = [], None, "\n", 0
+    while i < len(command):
+        c = command[i]
+        if quote is None and c == "#" and (prev.isspace() or prev in PUNCTUATION):
+            end = command.find("\n", i)
+            if end < 0:
+                break
+            i = end
+            continue
+        if c == "\\" and quote != "'" and i + 1 < len(command):
+            out.append(command[i:i + 2])
+            prev, i = "\\", i + 2  # 이스케이프한 공백 뒤의 # 는 낱말 가운데다
+            continue
+        if c in "'\"" and quote in (None, c):
+            quote = None if quote else c
+        out.append(c)
+        prev, i = c, i + 1
+    return "".join(out)
+
+
+def segments(command):
+    """명령 줄을 실제로 실행될 단순 명령 조각(토큰 목록)들로 나눈다. 앞에 붙은 환경 변수 지정은 뗀다.
+    인용된 글자, heredoc 본문, 주석은 명령으로 치지 않는다. 해석하지 못하면 ValueError."""
+    lex = shlex.shlex(without_comments(without_heredoc_bodies(command)), posix=True, punctuation_chars=PUNCTUATION)
     lex.whitespace_split = True
-    segment, segments = [], []
-    for tok in lex:
+    lex.whitespace = " \t\r"  # 줄바꿈은 명령을 나누는 글자로 읽는다
+    lex.commenters = ""
+    segment, found = [], []
+    for tok in list(lex) + [";"]:
         if tok and set(tok) <= CONTROL:
-            segments.append(segment)
+            while segment and "=" in segment[0] and not segment[0].startswith("-"):
+                segment = segment[1:]
+            if segment:
+                found.append(segment)
             segment = []
         else:
             segment.append(tok)
-    segments.append(segment)
-    found = []
-    for seg in segments:
-        while seg and "=" in seg[0] and not seg[0].startswith("-"):
-            seg = seg[1:]  # 앞에 붙은 환경 변수 지정
-        if len(seg) >= 3 and os.path.basename(seg[0]) == "gh" and seg[1:3] == ["pr", "merge"]:
-            found.append(seg[3:])
     return found
+
+
+def merge_segments(command):
+    """명령 줄에서 실제로 실행될 `gh pr merge ...` 조각들의 인자를 돌려준다."""
+    return [seg[3:] for seg in segments(command)
+            if len(seg) >= 3 and os.path.basename(seg[0]) == "gh" and seg[1:3] == ["pr", "merge"]]
 
 
 VALUE_FLAGS = {"-R", "--repo", "-t", "--subject", "-b", "--body", "-F", "--body-file",
@@ -71,27 +117,43 @@ def ci_problem(cwd, merge_args):
     return "CI 가 실패했다. 원인을 고친 뒤 병합한다\n" + "\n".join(r.stdout.splitlines()[-10:])
 
 
+def head_problem(cwd, merge_args):
+    """PR 의 최신 커밋이 검증한 로컬 HEAD 와 다르면 그 이유. gh 가 오류로 끝나거나 값을 못 읽으면 None."""
+    target, repo = pr_target(merge_args)
+    try:
+        r = subprocess.run(["gh", "pr", "view", *target, *repo, "--json", "headRefOid", "-q", ".headRefOid"],
+                           cwd=cwd, capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    remote, local = r.stdout.strip(), job.head(cwd)
+    if r.returncode != 0 or not remote or remote == local:
+        return None
+    return ("PR 의 최신 커밋(%s)이 검증한 로컬 HEAD(%s)와 다르다. push 하지 않은 커밋이 있거나 PR 에 다른 커밋이 올라왔다. "
+            "맞춘 뒤 그 커밋에서 다시 검증하고 병합한다" % (job.short(remote), job.short(local)))
+
+
 def main():
     data = json.load(sys.stdin)
     if data.get("tool_name") != "Bash":
         return
-    segments = merge_segments(data.get("tool_input", {}).get("command", ""))
-    if not segments:
+    merges = merge_segments(data.get("tool_input", {}).get("command", ""))
+    if not merges:
         return
     cwd = data.get("cwd") or os.getcwd()
     state = job.load(cwd)
     if state is None or state["merged"] or state.get("branch") != job.branch(cwd):
         return
     left = job.missing(state, cwd)
-    problem = ci_problem(cwd, segments[0])
-    if problem:
-        left.append(problem)
+    for problem in (ci_problem(cwd, merges[0]), head_problem(cwd, merges[0])):
+        if problem:
+            left.append(problem)
     if not left:
         return
     reason = "fade job 의 병합 조건이 채워지지 않았다.\n" + "\n".join("- " + m for m in left) + \
              "\n`job.py show` 로 기록을 보고 채운 뒤 다시 병합한다. 채울 수 없으면 병합하지 않고 보고한다."
     print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
-                                             "permissionDecisionReason": reason}}, ensure_ascii=False))
+                                             "permissionDecisionReason": reason}}, ensure_ascii=False), flush=True)
+    job.add_mistake(cwd, state, "gate", "병합하려 했으나 막힘: " + "; ".join(left))  # 판정을 먼저 내보내 기록이 실패해도 막는다
 
 
 if __name__ == "__main__":
