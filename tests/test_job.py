@@ -1,4 +1,5 @@
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -30,7 +31,7 @@ class JobTest(unittest.TestCase):
         self.assertEqual(job(self.cwd, "green").returncode, 0)
         self.assertEqual(job(self.cwd, "evidence", "기준 1", self.shot()).returncode, 0)
         self.assertEqual(job(self.cwd, "tried", "화면에서 눌러 봄", self.shot("try.png")).returncode, 0)
-        self.assertEqual(job(self.cwd, "review", "0").returncode, 0)
+        self.assertEqual(job(self.cwd, "review", "0", "작은 변경이라 버그 축만").returncode, 0)
         if door:
             self.assertEqual(job(self.cwd, "door", "two-way", "스크립트 변경, revert 하면 돌아간다").returncode, 0)
 
@@ -104,7 +105,7 @@ class JobTest(unittest.TestCase):
         self.assertEqual(job(self.cwd, "no-test", "이 레포에는 테스트 실행 장치가 없다").returncode, 0)
         job(self.cwd, "evidence", "기준", self.shot())
         job(self.cwd, "try-na", "화면도 명령도 없는 문서 변경")
-        job(self.cwd, "review", "0")
+        job(self.cwd, "review", "0", "작은 변경이라 버그 축만")
         job(self.cwd, "door", "two-way", "문서만 바뀐다")
         self.assertEqual(job(self.cwd, "check").returncode, 0)
 
@@ -154,7 +155,7 @@ class JobTest(unittest.TestCase):
         self.assertEqual(job(self.cwd, "green").returncode, 0)
         job(self.cwd, "evidence", "기준 1", self.shot())
         job(self.cwd, "tried", "화면에서 눌러 봄", self.shot("try.png"))
-        job(self.cwd, "review", "0")
+        job(self.cwd, "review", "0", "작은 변경이라 버그 축만")
         r = job(self.cwd, "check")
         self.assertEqual(r.returncode, 0, r.stdout)
 
@@ -166,7 +167,7 @@ class JobTest(unittest.TestCase):
         job(self.cwd, "green")
         job(self.cwd, "evidence", "기준 1", self.shot())
         job(self.cwd, "tried", "화면에서 눌러 봄", self.shot("try.png"))
-        job(self.cwd, "review", "0")
+        job(self.cwd, "review", "0", "작은 변경이라 버그 축만")
         out = job(self.cwd, "check").stdout
         self.assertIn("기준 2", out)
         self.assertNotIn("기준 1", out)
@@ -265,6 +266,48 @@ class JobTest(unittest.TestCase):
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("모르는 옵션: --mino", r.stderr)
         self.assertNotIn("- 리뷰(", job(self.cwd, "show").stdout)  # 기록되지 않았다
+
+    def test_모든_명령이_모르는_옵션을_앞뒤_어디서든_받지_않고_아무것도_하지_않는다(self):
+        doc = job(self.cwd).stderr  # 인자 없이 돌리면 사용법 전체를 낸다
+        commands = list(dict.fromkeys(re.findall(r"^  job\.py (\S+)", doc, re.M)))
+        self.assertGreaterEqual(len(commands), 20, doc)
+        for name in ("merged", "green", "stop", "mark", "review-files", "check", "door", "pr"):
+            self.assertIn(name, commands)
+        self.start()
+        runs = os.path.join(self.cwd, "runs.txt")
+        self.assertEqual(job(self.cwd, "red", "echo 돌았다 >> runs.txt; exit 1").returncode, 0)
+        before, state = len(mistakes()), self.state_bytes()
+        for cmd in commands:
+            for args in ((cmd, "1", "key", "값", "--bogus"), (cmd, "--bogus", "1", "key", "값")):
+                r = job(self.cwd, *args)
+                self.assertNotEqual(r.returncode, 0, args)
+                self.assertIn("모르는 옵션: --bogus", r.stderr, args)
+                self.assertIn("job.py " + cmd + " ", r.stderr + " ", args)  # 그 명령의 사용법
+        self.assertEqual(self.state_bytes(), state)  # merged, stop, review 같은 기록이 바뀌지 않았다
+        self.assertEqual(len(mistakes()), before)  # stop 이 실수 기록에 줄을 붙이지 않았다
+        with open(runs, encoding="utf-8") as f:
+            self.assertEqual(len(f.read().splitlines()), 1)  # green 과 log 가 명령을 돌리지 않았다
+
+    def test_대시_두_개_뒤의_인자는_옵션이_아니라_값이다(self):
+        r = job(self.cwd, "start", "--unattended", "--", "--pr-only")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("- 작업: --pr-only", r.stdout)
+        self.assertIn("- 범위: 병합까지", r.stdout)  # 값으로 받은 --pr-only 는 범위를 바꾸지 않는다
+        self.assertIn("- 사람 없음", r.stdout)  # -- 앞의 옵션은 그대로 읽는다
+        r = job(self.cwd, "review", "0", "--", "--bogus")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("남은 막는 지적 0개 — --bogus", r.stdout)
+        before = len(mistakes())
+        r = job(self.cwd, "stop", "--", "--unattended")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("상태: 멈춤(--unattended)", r.stdout)
+        self.assertEqual(mistakes()[before]["what"], "--unattended")
+
+    def state_bytes(self):
+        git_dir = subprocess.run(["git", "rev-parse", "--absolute-git-dir"], cwd=self.cwd, capture_output=True,
+                                 text=True).stdout.strip()
+        with open(os.path.join(git_dir, "fade-job.json"), "rb") as f:
+            return f.read()
 
     def test_사람이_볼_것이_있으면_써_보기를_채운_것으로_친다(self):
         self.start()
