@@ -67,8 +67,13 @@ def result_text(part):
 
 
 def output_lines(part):
-    """도구 출력의 줄들. Read 의 줄 번호 머리(「12\t」)는 뗀다."""
-    return {READ_PREFIX.sub("", line).rstrip() for line in result_text(part).splitlines()}
+    """도구 출력의 줄들. Read 의 줄 번호 머리(「12\t」)를 뗀 줄과 그대로의 줄을 둘 다 넣는다
+    (숫자와 탭으로 시작하는 diff 줄이 cat 이나 git diff 출력에서 떼여 맞지 않게 되지 않도록)."""
+    out = set()
+    for line in result_text(part).splitlines():
+        out.add(line.rstrip())
+        out.add(READ_PREFIX.sub("", line).rstrip())
+    return out
 
 
 def seen_in(path, since):
@@ -155,7 +160,8 @@ def main():
     for here, seg in merge_gate.located((data.get("tool_input") or {}).get("command") or "", cwd):
         if not is_review(seg):
             continue
-        found = merge_gate.job_at(here)
+        # 폴더를 알 수 없으면(셸 변수, 없는 폴더) 세션 폴더의 기록으로 판정한다
+        found = merge_gate.job_at(here) if here is not None else merge_gate.job_at(cwd)
         if not found:
             continue
         state, wt = found

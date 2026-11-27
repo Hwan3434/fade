@@ -164,8 +164,17 @@ class GateTest(unittest.TestCase):
         self.t.tool("Bash", {"command": "git diff main...HEAD"},
                     result="Output too large (31.2KB). Full output saved to: x\n<persisted-output>\n" + "\n".join(lines[:20]))
         reason = self.denied()
-        self.assertIn("41", reason)  # 41번 줄부터 보이지 않았다
-        self.assertIn(str(len(lines)), reason)
+        self.assertIn("보이지 않은 줄: 41-%d." % len(lines), reason)  # 41번 줄부터 끝까지 보이지 않았다
+
+    def test_숫자와_탭으로_시작하는_diff_줄도_cat_으로_읽으면_맞는다(self):
+        with open(self.patch, "a") as f:
+            f.write("12\t표의 한 줄\n")
+        self.t.prompt(MARKER)
+        self.t.tool("Bash", {"command": "cat bug.patch"}, result=self.patch_text())
+        self.assertIsNone(self.gate())
+
+    def test_폴더를_알_수_없는_review_는_세션_폴더의_기록으로_판정한다(self):
+        self.assertIn("code-review", self.denied('cd "$WT" && job.py review 0 "x"'))
 
     def test_다른_파일의_diff_는_치지_않는다(self):
         self.t.prompt(MARKER)
