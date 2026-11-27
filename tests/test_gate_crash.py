@@ -5,6 +5,8 @@ import subprocess
 import sys
 import unittest
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "hooks"))
+
 from helpers import GATE, PERMISSION, commit_and_switch, commit_file, git_repo, job
 from test_gaps import Repo, job_dir
 
@@ -24,6 +26,19 @@ class CrashTest(Repo):
     def test_cd_뒤_리다이렉트가_붙어도_base_에서의_merge_를_본다(self):
         self.denied("cd %s 2>/dev/null && git merge feat/x" % self.main, self.wt)
 
+    def test_알_수_없는_cd_뒤에도_절대_경로_cd_는_따라간다(self):
+        self.denied('cd "$X" && cd %s && git merge feat/x' % self.main, self.wt)
+
+    def test_한_조각의_판정이_실패해도_같은_줄의_다른_병합을_막는다(self):
+        import merge_gate
+        broken = merge_gate.git_targets
+        merge_gate.git_targets = lambda here, seg: 1 / 0  # 앞 조각의 판정이 죽는다
+        try:
+            found = merge_gate.problems("git push origin feat/x; gh pr merge 3", self.wt)
+        finally:
+            merge_gate.git_targets = broken
+        self.assertTrue(found)
+
     def test_없는_폴더의_git_조각이_훅을_죽이지_않는다(self):
         self.denied("cd /nonexistent/fade-x && git merge feat/x; gh pr merge 3", self.wt)
         self.denied("git -C /nonexistent/fade-x push origin HEAD:main; gh pr merge 3", self.wt)
@@ -39,7 +54,7 @@ class RedirectNumberTest(Repo):
             f.write("#!/bin/sh\ncase \"$*\" in\n  \"pr view 3 \"*headRefName*) echo feat/x ;;\nesac\nexit 0\n")
         os.chmod(gh, 0o755)
         env = dict(os.environ, PATH=self.bin.name + os.pathsep + os.environ["PATH"])
-        for command in ("gh pr merge 3 >/dev/null 2>&1", "gh pr merge 3 > log"):
+        for command in ("gh pr merge 3 >/dev/null 2>&1", "gh pr merge 3 > log", 'gh pr merge "3">/dev/null', "gh pr merge '3'>log"):
             payload = {"hook_event_name": "PreToolUse", "tool_name": "Bash", "cwd": self.main,
                        "tool_input": {"command": command}}
             r = subprocess.run([sys.executable, GATE], input=json.dumps(payload), capture_output=True, text=True, env=env)

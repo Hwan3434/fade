@@ -99,7 +99,7 @@ def segments(command):
     shlex 가 못 읽는 bash 의 $'...' 는 빈 따옴표로 바꿔 읽는다. 인용된 글자라 명령으로 치지 않는 것은 같다."""
     # 리다이렉트에 붙은 fd 번호(2>, 1>&2)를 뗀다. shlex 는 「3 >」과 「3>」을 같은 낱말로 나눠, 나눈 뒤에는
     # 띄어 쓴 인자(gh pr merge 3 >/dev/null 의 PR 번호)와 가를 수 없다
-    command = re.sub(r"(?<![\w$-])\d+(?=[<>])", "", without_heredoc_bodies(command))
+    command = re.sub(r"(?<![\w$\"'/.~-])\d+(?=[<>])", "", without_heredoc_bodies(command))
     lex = shlex.shlex(without_comments(without_ansi_c(command)), posix=True,
                       punctuation_chars=PUNCTUATION)
     lex.whitespace_split = True
@@ -139,9 +139,9 @@ def without_redirects(seg):
 
 def folder(base, value):
     """cd 나 git -C 의 값으로 간 폴더. 셸 변수처럼 펼칠 수 없거나 없는 폴더면 None(알 수 없음)이다."""
-    if base is None or "$" in value or "`" in value:
+    if "$" in value or "`" in value or (base is None and not os.path.isabs(os.path.expanduser(value))):
         return None
-    path = os.path.normpath(os.path.join(base, os.path.expanduser(value)))
+    path = os.path.normpath(os.path.join(base or "/", os.path.expanduser(value)))
     return path if os.path.isdir(path) else None
 
 
