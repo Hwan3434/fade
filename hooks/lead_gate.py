@@ -79,7 +79,8 @@ def seconds(stamp):
 
 def started_here(calls, wt, started):
     """세션 기록의 Bash 호출 가운데 그 워크트리에서 돈 `job.py start` 가 있으면 True. 폴더를 알 수 없는
-    (셸 변수로 cd 한) start 가 그 작업이 시작된 때(started 앞뒤 5분)에 돌았으면 None(그럴 수 있음), 없으면 False."""
+    (셸 변수로 cd 한) start 를 그 작업이 시작되기 전 하루 안(앞 명령이나 승인 대기로 벌어질 수 있다)이나 1분 뒤까지에
+    냈으면 None(그럴 수 있음), 없으면 False. 기록의 시각은 명령을 낸 때이고 started 는 job.py 가 돈 때다."""
     maybe = False
     for cwd, command, at in calls:
         try:
@@ -90,7 +91,7 @@ def started_here(calls, wt, started):
             if job_command(seg) != "start":
                 continue
             if here is None:
-                maybe = maybe or (at is not None and abs(at - (started or 0)) <= 300)
+                maybe = maybe or (at is not None and -60 <= (started or 0) - at <= 86400)
             elif os.path.isdir(here) and job.git_dir(here) and job.top_dir(here) == wt:
                 return True
     return None if maybe else False

@@ -23,10 +23,29 @@ CONTROL = set(";&|()\n")  # 명령을 나누는 글자. < > 는 리다이렉트�
 # heredoc 의 끝 글. 따옴표를 쳤으면 따옴표 안 전부(END-NOTES, A.B), 아니면 연산자와 따옴표가 아닌 글자들이다
 # 따옴표 없는 끝 글은 글자나 _ 로 시작해야 한다. $((1<<2)) 의 2 를 끝 글로 읽으면 뒤 줄이 모두 본문으로 사라진다
 HEREDOC = re.compile(r"(?<!<)<<-?\s*(?:'([^'\n]*)'|\"([^\"\n]*)\"|\\?([A-Za-z_][^\s;&|<>()'\"]*))")
-ARITH = re.compile(r"\$?\(\([^()]*\)\)")
 QUOTED = ";&|()<>\n"  # 따옴표 안이나 \ 뒤에 있으면 글자일 뿐인 연산자 글자
 HIDE = {ord(c): 0xE000 + i for i, c in enumerate(QUOTED)}  # 해석하는 동안 쓰는 사용 영역 글자
 SHOW = {v: k for k, v in HIDE.items()}
+
+
+def without_arithmetic(line):
+    """산술 $((...)) 와 ((...)) 를 괄호 깊이를 세어 뺀다. 그 안의 << 는 시프트다."""
+    out, i, n = [], 0, len(line)
+    while i < n:
+        if line.startswith("((", i):
+            depth, j = 0, i
+            while j < n:
+                depth += {"(": 1, ")": -1}.get(line[j], 0)
+                j += 1
+                if depth == 0:
+                    break
+            if out and out[-1] == "$":
+                out.pop()
+            i = j
+            continue
+        out.append(line[i])
+        i += 1
+    return "".join(out)
 
 
 def without_heredoc_bodies(command):
@@ -39,7 +58,7 @@ def without_heredoc_bodies(command):
             continue
         out.append(line)
         # 따옴표 안과 산술($((1<<n)), ((x<<=y)))의 << 는 heredoc 이 아니다
-        m = HEREDOC.search(ARITH.sub("", hide_quoted(line)))
+        m = HEREDOC.search(without_arithmetic(hide_quoted(line)))
         if m:
             end = next(g for g in m.groups() if g is not None)
     return "\n".join(out)
@@ -187,7 +206,7 @@ def located(command, cwd, lexical=False):
             if target != "-":
                 # 없는 폴더를 글자 그대로 푸는 것은 && 로 이을 때뿐이다. cd 가 실패하면 && 뒤는 돌지 않지만,
                 # ; || 줄바꿈 뒤는 앞 폴더에서 돈다
-                cwd = folder(cwd, target) or (folder(cwd, target, True) if lexical and join == "&&" else None)
+                cwd = folder(cwd, target) or (folder(cwd, target, True) if lexical and join.startswith("&&") else None)
             continue
         here = cwd
         if name == "git":
