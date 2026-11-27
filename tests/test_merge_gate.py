@@ -160,6 +160,12 @@ class MergeGateTest(unittest.TestCase):
         job(self.cwd, "start", "작업")
         self.assertEqual(self.gate("git push origin x\ngh pr merge 3 --squash")["permissionDecision"], "deny")
 
+    def test_주석_뒤_다음_줄과_낱말_가운데_샵_뒤의_병합도_본다(self):
+        job(self.cwd, "start", "작업")
+        self.assertEqual(self.gate("git status # 설명\ngh pr merge 3 --squash")["permissionDecision"], "deny")
+        self.assertEqual(self.gate("echo a#b; gh pr merge 3 --squash")["permissionDecision"], "deny")
+        self.assertIsNone(self.gate("git status # gh pr merge 3 --squash"))
+
     def test_heredoc_본문의_글자는_명령이_아니다(self):
         job(self.cwd, "start", "작업")
         self.assertIsNone(self.gate("cat > notes.md <<'EOF'\ngh pr merge 3 --squash\nEOF"))

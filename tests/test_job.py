@@ -299,6 +299,36 @@ class JobTest(unittest.TestCase):
         for word in ("test -f done.txt", "기준 1", "화면에서 눌러 봄", "pull/7", "abc1234"):
             self.assertIn(word, out)
 
+    # 리뷰 입력 파일
+
+    def test_review_files_는_워크트리_안의_무시되는_폴더에_show_와_diff_를_쓴다(self):
+        commit_and_switch(self.cwd, "feat/x")
+        path = os.path.join(self.cwd, "app.txt")
+        with open(path, "w") as f:
+            f.write("새 줄\n")
+        subprocess.run(["git", "add", "app.txt"], cwd=self.cwd, check=True)
+        self.commit()
+        self.start()
+        r = job(self.cwd, "review-files", "HEAD~1")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        folder = os.path.join(self.cwd, ".fade-review")
+        self.assertIn(folder, r.stdout)
+        with open(os.path.join(folder, "show.txt"), encoding="utf-8") as f:
+            self.assertEqual(f.readline().strip(), "상태: 진행 중")
+        with open(os.path.join(folder, "diff.patch"), encoding="utf-8") as f:
+            self.assertIn("+새 줄", f.read())
+        with open(os.path.join(folder, "plan.md"), "w", encoding="utf-8") as f:  # 부르는 쪽이 파일 도구로 쓴다
+            f.write("계획서")
+        status = subprocess.run(["git", "status", "--porcelain"], cwd=self.cwd, capture_output=True, text=True)
+        added = subprocess.run(["git", "add", "-A", "-n"], cwd=self.cwd, capture_output=True, text=True)
+        self.assertEqual((status.stdout, added.stdout), ("", ""))
+
+    def test_review_files_는_없는_base_를_거부한다(self):
+        commit_and_switch(self.cwd, "feat/x")
+        self.start()
+        self.assertNotEqual(job(self.cwd, "review-files", "없는-브랜치").returncode, 0)
+        self.assertNotEqual(job(self.cwd, "review-files").returncode, 0)
+
     # 되돌릴 수 있는가 (door)
 
     def test_되돌릴_수_있는가가_없으면_막는다(self):

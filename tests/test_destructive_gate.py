@@ -74,6 +74,13 @@ class DestructiveGateTest(unittest.TestCase):
         self.assertBlocked("ls\nrm -rf ~")
         self.assertBlocked("echo $(rm -rf ~)")
 
+    def test_주석은_그_줄_끝까지만_뺀다(self):
+        self.assertBlocked("cd /tmp  # 설명\nrm -rf ~")  # 주석 뒤 줄바꿈이 사라지면 다음 줄이 앞 명령에 붙는다
+        self.assertBlocked("echo a#b; rm -rf ~")  # 낱말 가운데의 # 는 주석이 아니다
+        self.assertBlocked("echo '#'; rm -rf ~")
+        self.assertAllowed("ls # ; rm -rf ~")
+        self.assertAllowed("# rm -rf ~")
+
     def test_홈_아래_하위_폴더와_다른_경로의_삭제는_막지_않는다(self):
         for command in ("rm -rf ~/projects/tmp", "rm -rf $HOME/Library/Caches/x", "rm -rf build",
                         "rm -rf /tmp/fade-x", "rm -rf ~/.sshx", "rm -f ~/notes.txt", "rm ~", "rm -f /",
