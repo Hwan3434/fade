@@ -2,13 +2,19 @@
 """`job.py review` 직전에 버그 축 리뷰(code-review)가 실제로 diff 를 읽었는지 세션 기록에서 본다.
 
 「읽었다」는 도구 이름이 아니라 내용으로 판정한다. 받은 앞 리뷰(없으면 작업 시작) 뒤의 세션 기록 파일들(본체와
-하위 에이전트) 가운데 code-review 의 지시문이 나온 파일에서, 그 뒤에 받은 도구 출력에 `job.py review-files` 가 쓴
-`.fade-review/bug.patch` 의 줄이 모두 들어 있어야 한다. cat, Read, git diff, 나눠 읽기 어느 것이든 같다. Read 의 줄
-번호 머리는 떼고 견준다. 잘린 출력(토큰 한도, head)은 앞부분 줄만 들어 있어 나머지를 읽은 것으로 치지 않는다.
-같은 파일이어야 하는 것은 명세 리뷰어(다른 하위 에이전트)가 읽은 것을 버그 축의 증거로 치지 않기 위해서다.
-막으면 보이지 않은 줄 범위를 알리고 실수 기록에 한 줄 남긴다.
-판정할 수 없으면(세션 기록이 없거나 못 읽음, bug.patch 가 없음, OS 임시 폴더 레포, 훅이 죽음) 막지 않되, 그 사실과
-이유를 에이전트(additionalContext)와 사용자(systemMessage)에게 알린다. 실수를 막는 난간이지 보안 경계가 아니다.
+하위 에이전트) 가운데 code-review 의 지시문이 나온 파일에서, 그 뒤에 받은 도구 출력을 모두 합쳐 `job.py review-files`
+가 쓴 `.fade-review/bug.patch` 의 줄이 다 들어 있어야 한다. 큰 diff 는 code-review 를 여러 번(파일 단위 조각마다) 부르니
+그 합을 본다. cat, Read, git diff, 나눠 읽기 어느 것이든 같고, 종료 코드가 0 이 아닌 출력도 모델에 보였으니 친다.
+Read 의 줄 번호 머리는 떼고 견준다. 잘린 출력(토큰 한도, head)은 앞부분 줄만 들어 있어 나머지를 읽은 것으로 치지 않는다.
+지시문이 나온 파일만 보는 것은 명세 리뷰어(다른 하위 에이전트)나 본체가 code-review 밖에서 읽은 것을 버그 축의 증거로
+치지 않기 위해서다. CLI 는 code-review 가 하위 에이전트에서 돌아 이 구분이 된다. 데스크톱 앱은 지시문이 본체 기록에
+남아, 지시문 뒤에 본체가 받은 출력은 모두 친다.
+막으면 보이지 않은 줄 범위와 그 파일, 원인으로 보이는 것을 알리고 실수 기록에 한 줄 남긴다. `review-files` 가 레포의
+.gitattributes 표시로 파일을 빼서 bug.patch 가 비었으면 읽을 것이 없으니 받는다.
+판정할 수 없으면(세션 기록이 없거나 못 읽음, bug.patch 가 없음, code-review 를 불렀는데 지시문의 머리 글을 못 찾음,
+OS 임시 폴더 레포, `job.py review` 명령을 해석하지 못함, 훅이 죽음) 막지 않되, 그 사실과 이유를 에이전트
+(additionalContext)와 사용자(systemMessage)에게 알린다. `job.py review` 가 아닌 명령에는 아무것도 내지 않는다.
+실수를 막는 난간이지 보안 경계가 아니다.
 """
 import datetime
 import glob
@@ -23,6 +29,8 @@ from merge_gate import job  # noqa: E402
 
 MARKER = "## Phase 0 — Gather the diff"  # code-review 지시문의 머리. 앱은 본체 기록에, CLI 는 하위 에이전트 기록에 남긴다
 READ_PREFIX = re.compile(r"^ *\d+\t")  # Read 결과 줄의 번호 머리(cat -n 꼴)
+BINARY = re.compile(r"^Binary files .* differ$")  # git 이 본문을 내지 않는 파일. 읽을 줄이 아니다
+REVIEW_WORDS = re.compile(r"job\.py\W+review(?![-\w])")  # 해석하지 못한 명령이 job.py review 를 부르는 것으로 보이는가
 SLASH = "<command-name>/code-review</command-name>"  # 사용자가 /code-review 로 부른 흔적
 
 
@@ -92,8 +100,8 @@ def seen_in(path, since):
     for part in rows(path, since):
         called = called or calls_review(part)
         if part["type"] == "text" and MARKER in (part.get("text") or ""):
-            seen = set()  # 다시 지시문이 나오면 그 뒤의 리뷰만 본다
-        elif seen is not None and part["type"] == "tool_result" and not part.get("is_error"):
+            seen = set() if seen is None else seen  # 나눠 부른 code-review 들의 출력을 합친다
+        elif seen is not None and part["type"] == "tool_result":
             seen |= output_lines(part)
     return seen, called
 
@@ -133,21 +141,19 @@ def review_problem(state, wt, transcript):
         raise Unjudged("bug.patch 가 없다. review-files 를 돌린 job.py 가 이 훅과 다른 판일 수 있다(PATH 의 job.py)")
     with open(patch, encoding="utf-8", errors="replace") as f:
         lines = f.read().splitlines()
-    wanted = {i + 1: line.rstrip() for i, line in enumerate(lines) if len(line.strip()) >= 2}
+    wanted = {i + 1: line.rstrip() for i, line in enumerate(lines) if len(line.strip()) >= 2 and not BINARY.match(line)}
+    if not wanted and made.get("emptied"):
+        return None  # 바뀐 파일이 모두 레포가 읽을 대상이 아니라고 표시한 것이라 읽을 줄이 없다
     previous = state.get("review") or {}
     since = previous.get("at") or state.get("started") or 0
     files = [transcript] + sorted(glob.glob(os.path.join(transcript[:-len(".jsonl")], "subagents", "*.jsonl")))
-    best, reviewed, called = None, False, False
+    seen, reviewed, called = set(), False, False
     for f in files:
-        seen, call = seen_in(f, since)
+        got, call = seen_in(f, since)
         called = called or call
-        if seen is None:
-            continue
-        reviewed = True
-        missing = [n for n, text in wanted.items() if text not in seen]
-        if not missing:
-            return None
-        best = missing if best is None or len(missing) < len(best) else best
+        if got is not None:
+            reviewed = True
+            seen |= got
     after = "앞 리뷰" if previous else "작업 시작"
     if not reviewed and called:
         raise Unjudged("code-review 를 부른 흔적은 있는데 그 지시문의 머리 글(%s)을 찾지 못했다. code-review 스킬의 글이 "
@@ -155,9 +161,41 @@ def review_problem(state, wt, transcript):
     if not reviewed:
         return ("%s 뒤의 세션 기록에 code-review 가 돈 흔적이 없다. code-review 를 수준과 대상을 적어 부르고"
                 "(`medium .fade-review/bug.patch`), 그 리뷰가 bug.patch 를 끝까지 읽은 뒤 남긴다" % after)
-    return ("버그 축 리뷰가 bug.patch(%d줄)를 다 읽지 않았다. 출력에 보이지 않은 줄: %s. 잘린 출력(토큰 한도, head)은 "
-            "앞부분만 읽은 것이다. 보이지 않은 줄을 나눠 읽은 뒤 다시 남긴다. 명세 리뷰어가 읽은 것은 치지 않는다"
-            % (len(lines), spans(best)))
+    missing = [n for n, text in wanted.items() if text not in seen]
+    if not missing:
+        return None
+    return unread(lines, wanted, seen, missing, made.get("parts") or [])
+
+
+def file_of(lines):
+    """bug.patch 의 줄 번호마다 그 줄이 든 파일(diff --git 머리의 b/ 쪽 경로)."""
+    out, name = {}, ""
+    for i, line in enumerate(lines, 1):
+        if line.startswith("diff --git "):
+            name = line.split(" b/", 1)[1] if " b/" in line else line[len("diff --git "):]
+        out[i] = name
+    return out
+
+
+def unread(lines, wanted, seen, missing, parts):
+    """다 읽지 않았을 때 막는 이유: 보이지 않은 줄 범위와 그 파일, 원인으로 보이는 것, 마저 읽을 대상."""
+    where = file_of(lines)
+    by_file = {}
+    for n in missing:
+        by_file.setdefault(where[n], []).append(n)
+    ranges = "; ".join("%s: %s" % (name or "(파일 머리 앞)", spans(ns)) for name, ns in by_file.items())
+    # 파일 머리는 보였는데 그 파일의 index 줄이나 hunk 머리가 없으면 다른 범위로 만든 diff 를 읽은 것이다
+    headed = {where[n] for n, text in wanted.items() if text.startswith("diff --git ") and text in seen}
+    other = any(where[n] in headed and wanted[n].startswith(("index ", "@@")) for n in missing)
+    cause = ("읽은 diff 가 bug.patch 와 범위가 다른 diff 로 보인다(파일 머리는 보였는데 index 줄이나 hunk 머리가 다르다). "
+             "git diff 를 따로 만들지 말고 bug.patch 를 읽는다" if other else
+             "잘린 출력(토큰 한도, head)은 앞부분만 읽은 것이다")
+    targets = [p["path"] for p in parts if set(p.get("files") or []) & set(by_file)]
+    target = ("조각 " + ", ".join("`medium %s`" % t for t in targets) if targets else
+              "`medium .fade-review/bug.patch` 로 부르고 그 줄 범위를 읽는다")
+    return ("버그 축 리뷰가 bug.patch(%d줄)를 다 읽지 않았다. code-review 들이 받은 출력에 보이지 않은 줄(bug.patch 의 줄 "
+            "번호): %s. %s. 그 범위를 code-review 로 마저 읽는다(%s). 나눠 부른 code-review 들의 출력은 합쳐 보지만, "
+            "본체나 명세 리뷰어가 code-review 밖에서 읽은 것은 치지 않는다" % (len(lines), ranges, cause, target))
 
 
 def note(reason):
@@ -167,12 +205,18 @@ def note(reason):
                                                                     "additionalContext": text}}, ensure_ascii=False))
 
 
-def main():
-    data = json.load(sys.stdin)
+def main(data):
     if data.get("tool_name") != "Bash":
         return
     cwd = data.get("cwd") or os.getcwd()
-    for here, seg in merge_gate.located((data.get("tool_input") or {}).get("command") or "", cwd):
+    command = (data.get("tool_input") or {}).get("command") or ""
+    try:
+        pieces = list(merge_gate.located(command, cwd))
+    except Exception as e:  # 해석하지 못한 명령. job.py review 를 부르는 것으로 보일 때만 알린다
+        if REVIEW_WORDS.search(command):
+            note("명령을 해석하지 못했다(%s: %s)" % (type(e).__name__, e))
+        return
+    for here, seg in pieces:
         if not is_review(seg):
             continue
         # 폴더를 알 수 없으면(셸 변수, 없는 폴더) 세션 폴더의 기록으로 판정한다
@@ -200,7 +244,10 @@ def main():
 
 
 if __name__ == "__main__":
+    payload = {}
     try:
-        main()
-    except Exception as e:  # 훅이 죽으면 막지 않되, 판정하지 못했다고 알린다
-        note("훅이 오류로 끝났다(%s: %s)" % (type(e).__name__, e))
+        payload = json.load(sys.stdin)
+        main(payload)
+    except Exception as e:  # 훅이 죽으면 막지 않되, job.py review 를 판정하던 중이면 판정하지 못했다고 알린다
+        if REVIEW_WORDS.search(str(((payload if isinstance(payload, dict) else {}).get("tool_input") or {}).get("command"))):
+            note("훅이 오류로 끝났다(%s: %s)" % (type(e).__name__, e))
