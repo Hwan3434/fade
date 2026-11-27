@@ -161,6 +161,11 @@ class EvidencePathsTest(Base):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("기준 1", r.stdout)
 
+    def test_절대_경로로_적어도_레포_기준으로_남는다(self):
+        r = job(self.cwd, "log", "기준 1", "echo 1", "--paths", os.path.join(self.cwd, "src", "a.py"))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("기대는 경로 src/a.py", job(self.cwd, "show", "--full").stdout)
+
     def test_레포_밖_경로는_거부한다(self):
         self.assertNotEqual(job(self.cwd, "log", "기준 1", "echo 1", "--paths", self.out.name).returncode, 0)
 

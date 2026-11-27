@@ -150,7 +150,8 @@ def repo_paths(cwd, paths):
     for p in paths:
         # 레포 밖인지는 링크를 따라간 자리로 보고, 적는 경로는 링크 그대로 둔다. 링크가 가리키는 곳이 바뀌는 것도 변경이다
         real = os.path.relpath(os.path.realpath(os.path.join(cwd, p)), top)
-        rel = os.path.relpath(os.path.normpath(os.path.join(os.path.realpath(cwd), p)), top)
+        full = os.path.normpath(os.path.join(cwd, p))
+        rel = os.path.relpath(os.path.join(os.path.realpath(os.path.dirname(full)), os.path.basename(full)), top)
         if any(r == ".." or r.startswith(".." + os.sep) for r in (real, rel)):
             sys.exit("레포 밖의 경로다: " + p)
         if rel == "." or not os.path.exists(os.path.join(top, rel)):
