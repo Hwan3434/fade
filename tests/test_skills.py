@@ -332,6 +332,9 @@ class EnvironmentWordsTest(unittest.TestCase):
         self.assertIn("git 레포가 아닌 폴더", dispatch)
         self.assertIn("원격이 없", pr)
 
+    def test_tester_는_띄운_세션에_써_볼_레포를_알린다(self):
+        self.assertIn("FADE_TRY_REPO=", read("agents/tester.md"))
+
     def test_README_는_지원하는_운영체제를_적는다(self):
         for name in ("README.md", "README.en.md", "README.ja.md", "README.zh.md"):
             self.assertIn("Windows", read(name), name)

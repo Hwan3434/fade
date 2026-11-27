@@ -10,6 +10,8 @@
 병합 조건의 green 과 리뷰는 지금 커밋에서 찍힌 것만 친다. 증거와 써 보기는 지금 커밋에서 찍혔거나,
 기대는 경로(--paths)를 적었고 찍은 커밋 뒤로 그 경로가 바뀌지 않았으면 친다. 낡은 것이 하나라도 남으면 막는다.
 실수 기록은 작업과 레포를 넘어 모이는 한 파일(~/.claude/fade/mistakes.jsonl, 환경 변수 FADE_MISTAKES 로 바꾼다)이다.
+써 보기로 띄운 세션에는 FADE_TRY_REPO 에 써 볼 레포를 준다. 그 세션의 job.py 는 그 레포 밖의 작업 기록을 건드리지 않고,
+FADE_MISTAKES 를 정하지 않았으면 기본 실수 기록에도 쓰지 않는다.
 stop 과 slip, 그리고 병합 훅과 승인 창 훅이 막을 때 한 줄씩 붙는다. 레포가 OS 임시 폴더 아래에 있으면(테스트, 써 보기)
 FADE_MISTAKES 를 정하지 않은 동안 쓰지 않는다. PR 을 기록하면 이 작업에서 붙인 줄의 빈 pr 칸을 채운다.
 
@@ -51,7 +53,8 @@ FADE_MISTAKES 를 정하지 않은 동안 쓰지 않는다. PR 을 기록하면 
                                          출력과 diff 를 워크트리 안 .fade-review/ (git 이 무시하는 폴더)에 쓴다. 명세 리뷰어가 본
                                          커밋이 있으면 그 뒤에 고친 부분만, 없으면 base 와의 전체를 쓴다(둘째 줄이 어느 쪽인지 알린다).
                                          계획서 원문은 부르는 쪽이 plan.md 로 쓴다. 레포가 .gitattributes 에 linguist-generated,
-                                         -diff, binary 로 표시한 파일은 두 diff 에서 빼고 이름과 줄 수를 알린다. bug.patch 가
+                                         -diff, binary 로 표시한 파일은 두 diff 에서 빼고 이름과 줄 수를 알린다. 표시는
+                                         base 의 .gitattributes 에서만 읽는다(이 브랜치가 더한 표시는 병합 뒤부터 듣는다). bug.patch 가
                                          20000자를 넘으면 파일 경계에서 나눈 조각을 .fade-review/parts/ 에도 쓴다
   job.py review  <남은 막는 지적 수> [<요약>] [--spec | --minor] [--dropped=<수>]
                                          코드 리뷰 결과. 지금 커밋에서 남은 막는 지적이 0 이어야 병합한다.
@@ -384,9 +387,9 @@ def main_checkout(cwd):
 
 
 def skips_default(cwd):
-    """임시 폴더의 레포(테스트, 써 보기)에서 FADE_MISTAKES 를 정하지 않았으면 기본 실수 기록에 손대지 않는다.
-    붙이기(add_mistake), 채우기(fill_pr), 고치기(mark)가 모두 이것을 본다."""
-    return not os.environ.get("FADE_MISTAKES") and under_temp(main_checkout(cwd))
+    """임시 폴더의 레포(테스트, 써 보기)나 써 보기 세션(FADE_TRY_REPO)에서 FADE_MISTAKES 를 정하지 않았으면 기본 실수
+    기록에 손대지 않는다. 붙이기(add_mistake), 채우기(fill_pr), 고치기(mark)가 모두 이것을 본다."""
+    return not os.environ.get("FADE_MISTAKES") and bool(os.environ.get("FADE_TRY_REPO") or under_temp(main_checkout(cwd)))
 
 
 def add_mistake(cwd, state, source, what, key=""):
@@ -649,14 +652,16 @@ def patch_file(header):
     return rest.split(" b/", 1)[1] if " b/" in rest else rest
 
 
-def unreviewed(cwd, names):
+def unreviewed(cwd, names, source):
     """레포가 .gitattributes 로 읽을 대상이 아니라고 표시한 파일: linguist-generated(GitHub 가 diff 에서 접는 생성 파일),
     -diff 와 binary(git 이 글로 비교하지 않는 파일). 표시는 작업 트리의 .gitattributes 에서 읽는다.
     fade 는 파일 이름이나 확장자 목록을 갖지 않는다. 표시가 없으면 빼지 않는다."""
     if not names:
-        return []
-    r = subprocess.run(["git", "check-attr", "-z", "--stdin", "linguist-generated", "diff", "binary"], cwd=cwd,
-                       input="\0".join(sorted(names)) + "\0", capture_output=True, text=True)
+        return {}
+    r = subprocess.run(["git", "check-attr", "-z", "--source=" + source, "--stdin", "linguist-generated", "diff", "binary"],
+                       cwd=cwd, input="\0".join(sorted(names)) + "\0", capture_output=True, text=True)
+    if r.returncode != 0:
+        return None
     out, marked = r.stdout.split("\0"), {}
     for path, attr, value in zip(out[0::3], out[1::3], out[2::3]):
         mark = {("linguist-generated", "set"): "linguist-generated", ("linguist-generated", "true"): "linguist-generated",
@@ -718,7 +723,12 @@ def review_files(cwd, state, base):
     last = last if last and is_ancestor(cwd, last, now) else None
     bug_range = [last, "HEAD"] if last else [base + "...HEAD"]
     bug_names = changed(top, *bug_range)
-    skip = unreviewed(top, changed(top, base + "...HEAD") | changed(top, *spec_range) | bug_names)
+    # 표시는 base 의 .gitattributes 에서만 읽는다. 브랜치가 스스로 표시를 더해 자기 파일을 리뷰에서 빼지 못하게 한다.
+    # 이 브랜치가 더한 표시는 병합된 뒤의 작업부터 듣는다. base 의 표시를 읽지 못하면(옛 git) 아무것도 빼지 않는다
+    whole = changed(top, base + "...HEAD")
+    skip = unreviewed(top, whole | changed(top, *spec_range) | bug_names, base)
+    unread_marks = skip is None
+    skip = skip or {}
     keep = ["--", ":/"] + [":(top,literal,exclude)" + p for p in skip]
     r = subprocess.run(["git", "diff", *spec_range, *keep], cwd=top, capture_output=True, text=True)
     bug = subprocess.run(["git", "diff", *bug_range, *keep], cwd=top, capture_output=True, text=True).stdout
@@ -751,8 +761,14 @@ def review_files(cwd, state, base):
     print("bug.patch: %d줄, %d자 (%s)" % (len(bug.splitlines()), len(bug),
                                        "앞 리뷰가 본 %s 뒤" % short(last) if last else "base 와의 전체"))
     if skip:
-        print("리뷰에서 뺀 파일(레포의 .gitattributes 표시) %d개: %s"
+        print("리뷰에서 뺀 파일(base 의 .gitattributes 표시) %d개: %s"
               % (len(skip), ", ".join(excluded_text(excluded))))
+    if unread_marks:
+        print("base(%s)의 .gitattributes 표시를 읽지 못했다(git check-attr --source 는 git 2.40 부터). 아무 파일도 빼지 않았다"
+              % base)
+    if any(os.path.basename(n) == ".gitattributes" for n in whole):
+        print("이 브랜치가 .gitattributes 를 바꿨다. 리뷰에서 뺄 파일은 base 의 표시로만 정하니, 이 브랜치에서 더한 표시는 "
+              "병합된 뒤의 작업부터 듣는다. 그 변경 자체는 bug.patch 에 든다")
     if emptied:
         print("bug.patch 가 비었다: 바뀐 파일이 모두 읽을 대상이 아니라고 표시돼 있다. 버그 축은 읽을 것이 없으니 "
               "code-review 를 부르지 않고 그 사실을 리뷰 요약에 적어 남긴다. 명세 리뷰어는 diff.patch 로 본다")
@@ -817,6 +833,11 @@ def main(argv):
     if cmd not in COMMANDS:
         sys.exit(__doc__)
     args, options, paths = parse(cmd, argv[2:])
+    trial = os.environ.get("FADE_TRY_REPO")
+    if trial and cmd != "mark":  # 써 보기로 띄운 세션이 지시에 나온 진짜 워크트리로 cd 해 그 기록을 바꾼 일이 있다
+        here, root = (top_dir(cwd) if git_dir(cwd) else os.path.realpath(cwd)), os.path.realpath(trial)
+        if here != root and not here.startswith(root + os.sep):
+            sys.exit("써 보기 세션(FADE_TRY_REPO=%s)은 써 볼 레포 밖의 작업 기록을 건드리지 않는다: %s" % (trial, here))
     if cmd == "mark":
         mark(args)
         return
@@ -864,6 +885,7 @@ def main(argv):
         if len(args) != 1:  # 따옴표 없이 친 명령의 뒷말이 말없이 버려지지 않게 한다
             sys.exit("테스트 명령은 따옴표로 묶어 하나로 준다: job.py red \"%s\"" % " ".join(args))
         code, out = run(cwd, args[0])
+        state = load(cwd) or state  # 명령이 도는 동안 다른 job.py 가 남긴 기록을 덮어쓰지 않게 다시 읽는다
         if code == 0:
             sys.exit("테스트가 실패하지 않는다. 이번 변경을 판정하지 못하는 테스트다. 테스트를 고친다\n" + tail_of(out))
         if state["red"]:
@@ -879,6 +901,7 @@ def main(argv):
         if not state["red"]:
             sys.exit("red 가 없다. 구현 전에 실패하는 테스트부터 기록한다")
         code, out = run(cwd, state["red"]["cmd"])
+        state = load(cwd) or state
         if code != 0:
             sys.exit("테스트가 아직 통과하지 않는다 (종료 코드 %d)\n%s" % (code, tail_of(out)))
         impl = changed_since(cwd, state["red"])
@@ -910,6 +933,7 @@ def main(argv):
     elif cmd == "log":
         paths = repo_paths(cwd, paths)
         code, out = run(cwd, args[1])
+        state = load(cwd) or state
         need_clean(cwd, paths)  # 명령이 그 경로를 고쳤으면 지금 커밋의 내용으로 찍힌 증거가 아니다
         logs = os.path.join(git_dir(cwd), "fade-job-logs")
         os.makedirs(logs, exist_ok=True)
