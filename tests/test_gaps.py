@@ -144,6 +144,10 @@ class OtherFolderTest(Repo):
         out = self.ask(self.main, "Edit", {"file_path": os.path.join(self.wt, "a.txt")})
         self.assertEqual(out["decision"]["behavior"], "deny")
 
+    def test_승인_창_훅은_해석하지_못하는_명령에도_세션_폴더로_거부한다(self):
+        out = self.ask(self.wt, tool_input={"command": "echo $'it\\'s'"})
+        self.assertEqual(out["decision"]["behavior"], "deny")
+
     def test_승인_창_훅은_job_과_무관한_명령에_말하지_않는다(self):
         self.assertIsNone(self.ask(self.main, tool_input={"command": "git status"}))
         self.assertIsNone(self.ask(self.outside.name, tool_input={"command": "ls %s" % self.outside.name}))
