@@ -297,7 +297,6 @@ class PrFillTest(Base):
 
     def test_base_에서_시작해_브랜치를_딴_작업은_base_의_줄을_채우지_않는다(self):
         path, env = self.own_log()
-        subprocess.run(["git", "switch", "-q", "-c", "main"], cwd=self.cwd, check=True)
         other = tempfile.TemporaryDirectory()
         self.addCleanup(other.cleanup)
         subprocess.run(["git", "init", "-q", other.name], check=True)

@@ -135,14 +135,21 @@ def load(cwd):
 def save(cwd, state):
     # 워크트리를 만든 뒤 레포 규칙대로 브랜치를 새로 따거나 이름을 바꾸는 일이 있어, 기록할 때마다 지금 브랜치로 맞춘다.
     # 앞 이름은 branches 에 남겨, 바꾸기 전에 찍힌 실수 기록의 줄도 이 작업의 줄로 본다
-    now = branch(cwd)
-    if state.get("branch") and state["branch"] != now and state["branch"] not in state.setdefault("branches", []):
-        state["branches"].append(state["branch"])
+    now, old = branch(cwd), state.get("branch")
+    # base 에서 시작해 브랜치를 딴 경우 base 이름은 남기지 않는다. base 의 다른 작업 줄까지 이 작업으로 보게 된다
+    if old and old != now and old not in base_names(cwd) and old not in state.setdefault("branches", []):
+        state["branches"].append(old)
     state["branch"] = now
     p = state_path(cwd)
     with open(p + ".tmp", "w", encoding="utf-8") as f:
         json.dump(state, f, ensure_ascii=False, indent=2)
     os.replace(p + ".tmp", p)
+
+
+def base_names(cwd):
+    """base 로 칠 브랜치 이름: main, master, origin 의 기본 브랜치(병합 훅과 같다)."""
+    r = subprocess.run(["git", "symbolic-ref", "--short", "refs/remotes/origin/HEAD"], cwd=cwd, capture_output=True, text=True)
+    return {"main", "master"} | ({r.stdout.strip()[len("origin/"):]} if r.stdout.startswith("origin/") else set())
 
 
 def branch(cwd):
@@ -459,8 +466,10 @@ def fill_lines(lines, pr, repo, names, since):
 def mark(args):
     if len(args) < 3 or args[1] not in ("key", "handled"):
         sys.exit("job.py mark <줄 번호> key|handled <값>")
-    if skips_default(os.getcwd()):
-        sys.exit("임시 폴더의 레포에서는 FADE_MISTAKES 를 정하지 않으면 기본 실수 기록을 고치지 않는다")
+    # 고치는 것은 전역 기록이라, 임시 폴더 판정은 git 레포 안에서 부를 때만 한다(hardener 는 레포 밖에서도 부른다)
+    if not os.environ.get("FADE_MISTAKES") and (os.environ.get("FADE_TRY_REPO") or
+                                                (git_dir(os.getcwd()) and under_temp(main_checkout(os.getcwd())))):
+        sys.exit("써 보기 세션이나 임시 폴더의 레포에서는 FADE_MISTAKES 를 정하지 않으면 기본 실수 기록을 고치지 않는다")
     path = mistakes_path()
     if not os.path.exists(path):
         sys.exit("실수 기록에 없는 줄이다: %s (0줄)" % args[0])
@@ -534,8 +543,12 @@ def missing(state, cwd):
         out.append("리뷰: 남은 막는 지적 %d개" % review["left"])
     done = state.get("human_done") or {}
     for n, h in enumerate(state["human"], 1):
-        if str(n) not in done:
+        d = done.get(str(n))
+        if not d:
             out.append("사람이 볼 것 %d: %s. 사람이 확인한 뒤 job.py human-done %d \"<누가 무엇을 근거로>\" 로 푼다" % (n, h, n))
+        elif not holds(cwd, d, now):  # 사람이 본 뒤 코드가 바뀌었다
+            out.append("사람이 볼 것 %d: %s. 푼 커밋(%s) 뒤로 바뀌어 낡았다. 마지막 커밋(%s)에서 다시 확인하고 푼다"
+                       % (n, h, at(d), s))
     return out
 
 
@@ -900,8 +913,12 @@ def main(argv):
     elif cmd == "green":
         if not state["red"]:
             sys.exit("red 가 없다. 구현 전에 실패하는 테스트부터 기록한다")
-        code, out = run(cwd, state["red"]["cmd"])
+        ran = state["red"]
+        code, out = run(cwd, ran["cmd"])
         state = load(cwd) or state
+        if state["red"] != ran:
+            sys.exit("테스트가 도는 동안 다른 job.py 가 red 를 바꿨다. 돌린 것은 앞의 red(%s)다. green 을 다시 돌린다"
+                     % name_of(ran))
         if code != 0:
             sys.exit("테스트가 아직 통과하지 않는다 (종료 코드 %d)\n%s" % (code, tail_of(out)))
         impl = changed_since(cwd, state["red"])
@@ -958,13 +975,14 @@ def main(argv):
         state["human"].append(args[0])
         said = "사람이 볼 것을 기록했다: %s. 남아 있으면 병합하지 않는다" % brief(args[0])
     elif cmd == "human-done":
-        if not args[0].isdigit() or not 1 <= int(args[0]) <= len(state["human"]):
+        if not (args[0].isascii() and args[0].isdigit()) or not 1 <= int(args[0]) <= len(state["human"]):
             sys.exit("기록에 없는 사람이 볼 것의 번호다: %s (%d개)" % (args[0], len(state["human"])))
         if not args[1].strip():
             sys.exit("누가 무엇을 근거로 풀었는지가 비었다\n" + usage("human-done"))
         files = need_files(cwd, args[2:]) if args[2:] else []
-        state.setdefault("human_done", {})[args[0]] = {"by": args[1], "files": files, "at": time.time(), **where(cwd)}
-        said = "사람이 볼 것 %s번을 풀었다: %s" % (args[0], brief(args[1]))
+        n = int(args[0])  # 01 과 1 은 같은 항목이다
+        state.setdefault("human_done", {})[str(n)] = {"by": args[1], "files": files, "at": time.time(), **where(cwd)}
+        said = "사람이 볼 것 %d번을 풀었다: %s. 이 커밋에서만 유효하다(커밋이 바뀌면 다시 확인한다)" % (n, brief(args[1]))
     elif cmd in ("contrasted", "hardened"):
         if not args[0].strip():
             sys.exit("결과가 비었다\n" + usage(cmd))
