@@ -6,7 +6,7 @@ import sys
 import tempfile
 import unittest
 
-from helpers import GATE, PERMISSION, ROOT, commit_and_switch, git_repo, job, mistakes
+from helpers import GATE, PERMISSION, ROOT, commit_and_switch, fake_gh, git_repo, job, mistakes
 
 
 def git_dir(cwd):
@@ -106,7 +106,9 @@ class TempRepoTest(Base):
 
     def test_훅도_임시_레포에서는_기본_실수_기록에_쓰지_않고_막기는_한다(self):
         env = self.no_log_env()
-        env["PATH"] = os.pathsep.join(p for p in env["PATH"].split(os.pathsep) if not os.path.exists(os.path.join(p, "gh")))
+        bin_ = tempfile.TemporaryDirectory()  # 검사 줄이 없는 가짜 gh. PATH 에서 폴더를 빼면 같은 폴더의 git 도 사라진다
+        self.addCleanup(bin_.cleanup)
+        env["PATH"] = fake_gh(bin_.name, 0) + os.pathsep + env["PATH"]
         gate = self.hook(GATE, {"hook_event_name": "PreToolUse", "tool_name": "Bash",
                                 "tool_input": {"command": "gh pr merge 3 --squash"}}, env)
         self.assertEqual(gate["permissionDecision"], "deny")
