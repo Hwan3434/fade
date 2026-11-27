@@ -110,6 +110,10 @@ class GitMergeTest(Repo):
         self.assertIsNone(self.gate("echo $'it\\'s'", self.wt))  # 병합이 아닌 명령은 그대로 둔다
         self.assertIsNone(self.gate("git commit -m $'it\\'s ready to push'", self.wt))  # 메시지 속 글자는 병합이 아니다
         self.denied("git -C %s merge feat/x && echo $'it\\'s'" % self.main, self.wt)
+        # $'...' 가 든 줄이라도 작업 브랜치 push 와 충돌 풀기 merge 는 그대로 둔다
+        self.assertIsNone(self.gate("git commit -m $'it\\'s done' && git push -u origin feat/x", self.wt))
+        self.assertIsNone(self.gate("git merge main -m $'resolve it\\'s conflict'", self.wt))
+        self.assertIsNone(self.gate("echo $'next: git push origin HEAD:main later'", self.wt))
 
     def test_작업_브랜치를_base_로_push_해도_본다(self):
         for command in ("git push origin feat/x:main", "git push origin HEAD:main", "git push origin HEAD:refs/heads/main"):
@@ -136,7 +140,8 @@ class OtherFolderTest(Repo):
     def test_repo_를_준_병합은_PR_브랜치를_그_저장소로_묻는다(self):
         self.denied("gh pr merge 3 --repo o/r --squash", self.main)
         with open(os.path.join(self.bin.name, "calls.txt")) as f:
-            self.assertIn("pr view 3 --repo o/r --json headRefName -q .headRefName", f.read())
+            views = [line for line in f if "headRefName" in line]
+        self.assertTrue(views and all("--repo o/r" in line for line in views), views)
 
     def test_PR_브랜치의_워크트리가_없으면_말하지_않는다(self):
         self.assertIsNone(self.gate("gh pr merge 3 --squash", self.main, branch="feat/none"))
