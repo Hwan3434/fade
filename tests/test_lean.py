@@ -120,7 +120,7 @@ class EvidencePathsTest(Base):
         for cmd in ("tried", "evidence", "log"):
             r = job(self.cwd, cmd, "--paths", "src/a.py")
             self.assertNotEqual(r.returncode, 0)
-            self.assertIn("job.py tried", r.stderr)
+            self.assertIn("job.py %s <" % cmd, r.stderr)  # 그 명령의 사용법
             self.assertNotIn("Traceback", r.stderr)
 
     def test_명령이_기대는_경로를_고치면_기록하지_않는다(self):
@@ -286,14 +286,14 @@ class ReviewFilesTest(ReviewBase):
 
     def test_작은_변경도_큰_변경도_리뷰_축을_정하지_않고_판단_재료만_알린다(self):
         for n in (3, 900):
-            commit_file(self.cwd, "src/big.py", lines(n))
-            commit_file(self.cwd, "docs/note.md", lines(n, "글"))
+            commit_file(self.cwd, "src/big%d.py" % n, lines(n))
+            commit_file(self.cwd, "docs/note%d.md" % n, lines(n, "글"))
             out, _ = self.review_files()
             first = out.splitlines()[0]
             self.assertIn("파일 2개", first)
             self.assertIn("더한 줄 %d + 뺀 줄 0 = %d줄" % (2 * n, 2 * n), first)
-            self.assertIn("%d\t0\tsrc/big.py" % n, out)
-            self.assertIn("%d\t0\tdocs/note.md" % n, out)
+            self.assertIn("%d\t0\tsrc/big%d.py" % (n, n), out)
+            self.assertIn("%d\t0\tdocs/note%d.md" % (n, n), out)
             for word in ("버그 축만", "명세 리뷰어를 띄운다", "미만", "이상"):
                 self.assertNotIn(word, out)
             self.base = subprocess.run(["git", "rev-parse", "HEAD"], cwd=self.cwd, capture_output=True,
