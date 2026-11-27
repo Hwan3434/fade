@@ -114,6 +114,7 @@ class GitMergeTest(Repo):
         self.assertIsNone(self.gate("git commit -m $'it\\'s done' && git push -u origin feat/x", self.wt))
         self.assertIsNone(self.gate("git merge main -m $'resolve it\\'s conflict'", self.wt))
         self.assertIsNone(self.gate("echo $'next: git push origin HEAD:main later'", self.wt))
+        self.denied("gh pr merge 3 --squash && echo $'it\\'s'", self.main)  # 메인 체크아웃에서도 PR 브랜치로 찾는다
 
     def test_작업_브랜치를_base_로_push_해도_본다(self):
         for command in ("git push origin feat/x:main", "git push origin HEAD:main", "git push origin HEAD:refs/heads/main"):

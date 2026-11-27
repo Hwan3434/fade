@@ -61,9 +61,14 @@ def without_comments(command):
     return "".join(out)
 
 
+ANSI_C = re.compile(r"\$'(?:[^'\\]|\\.)*'")
+
+
 def segments(command):
     """명령 줄을 실제로 실행될 단순 명령 조각(토큰 목록)들로 나눈다. 앞에 붙은 환경 변수 지정은 뗀다.
-    인용된 글자, heredoc 본문, 주석은 명령으로 치지 않는다. 해석하지 못하면 ValueError."""
+    인용된 글자, heredoc 본문, 주석은 명령으로 치지 않는다. 해석하지 못하면 ValueError.
+    shlex 가 못 읽는 bash 의 $'...' 는 빈 따옴표로 바꿔 읽는다. 인용된 글자라 명령으로 치지 않는 것은 같다."""
+    command = ANSI_C.sub("''", command)
     lex = shlex.shlex(without_comments(without_heredoc_bodies(command)), posix=True, punctuation_chars=PUNCTUATION)
     lex.whitespace_split = True
     lex.whitespace = " \t\r"  # 줄바꿈은 명령을 나누는 글자로 읽는다
@@ -253,20 +258,10 @@ def head_problem(cwd, merge_args):
             "맞춘 뒤 그 커밋에서 다시 검증하고 병합한다" % (job.short(remote), job.short(local)))
 
 
-# git 바로 뒤(값이 붙는 -C, -c 만 건너뛴다)에 하위 명령으로 온 merge·pull·push 만 병합이다. 메시지 속 글자는 아니다
-MERGE_WORDS = re.compile(r"\bgh\s+pr\s+merge\b|\bgit(?:\s+-[Cc]\s+\S+)*\s+(?:merge|pull|push)\b")
-
-
 def problems(command, cwd):
     """명령 줄이 base 로 들이는 job 마다 빠진 것을 모은다. (기록, 워크트리, 빠진 것들) 의 목록."""
     out = []
-    try:
-        parts = located(command, cwd)
-    except ValueError:
-        # 셸은 받지만 shlex 가 못 읽는 명령($'...')이다. 병합으로 보이는 글자가 있으면 세션 폴더의 기록으로 판정한다
-        found = MERGE_WORDS.search(command) and job_at(cwd)
-        return [(found[0], cwd, job.missing(found[0], cwd))] if found and job.missing(found[0], cwd) else []
-    for here, seg in parts:
+    for here, seg in located(command, cwd):
         if len(seg) >= 3 and os.path.basename(seg[0]) == "gh" and seg[1:3] == ["pr", "merge"]:
             # cd 대상이 레포 밖이거나 펼쳐지지 않은 글자($WT)여서 못 찾으면 세션 폴더의 기록을 본다(예전 동작)
             found = gh_target(here, seg[3:]) or (here != cwd and gh_target(cwd, seg[3:]))
