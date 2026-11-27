@@ -144,6 +144,7 @@ class ReportTextTest(unittest.TestCase):
     def test_병합_단계는_기록_댓글을_보고_단계에_맡긴다(self):
         merge = read("skills/job/stages/merge.md")
         self.assertNotIn("PR 에 같은 내용을 댓글로 남긴다", merge)
+        self.assertIn("보고 단계에서", merge)
 
     def test_증거_단계는_log_가_출력_끝을_늘_보인다고_하지_않는다(self):
         evidence = read("skills/job/stages/evidence.md")
@@ -176,7 +177,8 @@ class DispatchRemoteTest(unittest.TestCase):
 
     def test_사용자_메시지_없이_시작한_턴에서_거부되면_사용자에게_청하거나_CLI_를_쓴다(self):
         self.assertIn("사용자의 메시지", self.desktop)
-        self.assertIn("CLI", self.desktop)
+        self.assertIn("스스로 깨어난 턴에서는 같은 폴더의 세션도 거부된다", self.desktop)
+        self.assertIn("없으면 아래 CLI 방법을 쓴다", self.desktop)
 
     def test_같은_폴더_워커에서_걸린_것을_적는다(self):
         # 훅과 job.py 는 세션의 폴더로 기록을 찾는다. git -C 만으로는 찾지 못한다

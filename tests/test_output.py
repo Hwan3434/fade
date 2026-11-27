@@ -81,6 +81,10 @@ class RecordOutputTest(unittest.TestCase):
         for word in WHOLE:
             self.assertNotIn(word, r.stdout)
 
+    def test_log_가_실패했는데_출력이_없으면_그렇다고_알린다(self):
+        self.short("start", "작업")
+        self.assertIn("아무것도 찍지 않았다", self.short("log", "기준", "exit 2"))
+
     def test_log_가_실패하면_stderr_뒤에_찍힌_stdout_의_원인도_보인다(self):
         self.short("start", "작업")
         r = job(self.cwd, "log", "기준", "for i in $(seq 1 50); do echo 경고$i >&2; done; echo 원인=끝줄; exit 1")
@@ -99,8 +103,8 @@ class RecordOutputTest(unittest.TestCase):
         self.assertEqual(len(notice), 1, r.stdout)
         self.assertIn("2개", notice[0])
         self.assertLessEqual(len(lines), 3, r.stdout)
-        job(self.cwd, "answered", "1", "A")
-        job(self.cwd, "answered", "2", "하지 않는다")
+        self.assertIn("답을 받지 못한 질문 1개", self.short("answered", "1", "A"))
+        self.short("answered", "2", "하지 않는다")
         self.assertNotIn("답을 받지 못한 질문", self.short("door", "two-way", "revert 하면 돌아간다"))
 
 
