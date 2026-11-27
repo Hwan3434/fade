@@ -23,6 +23,7 @@ CONTROL = set(";&|()\n")  # 명령을 나누는 글자. < > 는 리다이렉트�
 # heredoc 의 끝 글. 따옴표를 쳤으면 따옴표 안 전부(END-NOTES, A.B), 아니면 연산자와 따옴표가 아닌 글자들이다
 # 따옴표 없는 끝 글은 글자나 _ 로 시작해야 한다. $((1<<2)) 의 2 를 끝 글로 읽으면 뒤 줄이 모두 본문으로 사라진다
 HEREDOC = re.compile(r"(?<!<)<<-?\s*(?:'([^'\n]*)'|\"([^\"\n]*)\"|\\?([A-Za-z_][^\s;&|<>()'\"]*))")
+ARITH = re.compile(r"\$?\(\([^()]*\)\)")
 QUOTED = ";&|()<>\n"  # 따옴표 안이나 \ 뒤에 있으면 글자일 뿐인 연산자 글자
 HIDE = {ord(c): 0xE000 + i for i, c in enumerate(QUOTED)}  # 해석하는 동안 쓰는 사용 영역 글자
 SHOW = {v: k for k, v in HIDE.items()}
@@ -37,7 +38,8 @@ def without_heredoc_bodies(command):
                 end = None
             continue
         out.append(line)
-        m = HEREDOC.search(hide_quoted(line))  # 따옴표 안의 << 는 heredoc 이 아니다
+        # 따옴표 안과 산술($((1<<n)), ((x<<=y)))의 << 는 heredoc 이 아니다
+        m = HEREDOC.search(ARITH.sub("", hide_quoted(line)))
         if m:
             end = next(g for g in m.groups() if g is not None)
     return "\n".join(out)
@@ -116,7 +118,12 @@ def hide_quoted(command):
 
 
 def segments(command):
-    """명령 줄을 실제로 실행될 단순 명령 조각(토큰 목록)들로 나눈다. 앞에 붙은 환경 변수 지정과 리다이렉트(그 대상까지)는
+    """명령 줄의 단순 명령 조각(토큰 목록)들. joined 에서 잇는 글자를 뺀 것이다."""
+    return [seg for seg, _ in joined(command)]
+
+
+def joined(command):
+    """명령 줄을 실제로 실행될 단순 명령 조각(토큰 목록)과 그 뒤를 잇는 글자의 짝들로 나눈다. 앞에 붙은 환경 변수 지정과 리다이렉트(그 대상까지)는
     뗀다. 인용된 글자, heredoc 본문, 주석은 명령으로 치지 않는다. 해석하지 못하면 ValueError.
     shlex 가 못 읽는 bash 의 $'...' 는 빈 따옴표로 바꿔 읽는다. 인용된 글자라 명령으로 치지 않는 것은 같다."""
     # 리다이렉트에 붙은 fd 번호(2>, 1>&2)를 뗀다. shlex 는 「3 >」과 「3>」을 같은 낱말로 나눠, 나눈 뒤에는
@@ -133,7 +140,7 @@ def segments(command):
             while segment and "=" in segment[0] and not segment[0].startswith("-"):
                 segment = segment[1:]
             if segment:
-                found.append(segment)
+                found.append((segment, tok))  # 조각과 그 뒤를 잇는 글자(&&, ;, ||, 줄바꿈 등)
             segment, skip = [], False
         elif skip:
             skip = False  # 리다이렉트의 대상
@@ -169,7 +176,7 @@ def located(command, cwd, lexical=False):
     폴더를 알 수 없으면(셸 변수, 없는 폴더) 그 조각의 폴더는 None 이다. 부르는 쪽이 세션 폴더로 판정한다.
     리다이렉트는 segments 가 이미 뗐다."""
     out = []
-    for seg in segments(command):
+    for seg, join in joined(command):
         while seg and (seg[0] in WRAPPERS or ("=" in seg[0] and not seg[0].startswith("-"))):
             seg = seg[1:]
         if not seg:
@@ -178,7 +185,9 @@ def located(command, cwd, lexical=False):
         if name == "cd":
             target = next((a for a in seg[1:] if not a.startswith("-") or a == "-"), "~")
             if target != "-":
-                cwd = folder(cwd, target, lexical)
+                # 없는 폴더를 글자 그대로 푸는 것은 && 로 이을 때뿐이다. cd 가 실패하면 && 뒤는 돌지 않지만,
+                # ; || 줄바꿈 뒤는 앞 폴더에서 돈다
+                cwd = folder(cwd, target) or (folder(cwd, target, True) if lexical and join == "&&" else None)
             continue
         here = cwd
         if name == "git":
