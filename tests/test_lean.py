@@ -149,6 +149,21 @@ class EvidencePathsTest(Base):
         subprocess.run(GIT + ["commit", "-q", "-m", "링크를 바꿈"], cwd=self.cwd, check=True)
         self.assertIn("「기준 1」의 낡은 증거", self.check())
 
+    def test_링크를_경로로_적으면_링크가_가리키는_파일의_내용이_바뀌는_것도_본다(self):
+        os.symlink("a.py", os.path.join(self.cwd, "src", "link.py"))
+        subprocess.run(["git", "add", "src/link.py"], cwd=self.cwd, check=True)
+        subprocess.run(GIT + ["commit", "-q", "-m", "링크"], cwd=self.cwd, check=True)
+        job(self.cwd, "log", "기준 1", "echo 1", "--paths", "src/link.py")
+        commit_file(self.cwd, "src/b.py", "b = 2\n")
+        self.assertNotIn("기준 1", self.check())
+        commit_file(self.cwd, "src/a.py", "a = 2\n")
+        self.assertIn("「기준 1」의 낡은 증거", self.check())
+
+    def test_추적하지_않는_파일을_숨기는_git_설정에서도_경로의_새_파일을_본다(self):
+        subprocess.run(["git", "config", "status.showUntrackedFiles", "no"], cwd=self.cwd, check=True)
+        open(os.path.join(self.cwd, "src", "new.py"), "w").close()
+        self.assertNotEqual(job(self.cwd, "log", "기준 1", "echo 1", "--paths", "src").returncode, 0)
+
     def test_커밋을_모르는_옛_기록이_있어도_show_가_죽지_않는다(self):
         job(self.cwd, "log", "기준 1", "echo 1")
         job(self.cwd, "tried", "써 봄", self.shot())

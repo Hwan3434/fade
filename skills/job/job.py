@@ -148,18 +148,19 @@ def repo_paths(cwd, paths):
         sys.exit("--paths 뒤에 경로가 없다")
     top, out = top_dir(cwd), []
     for p in paths:
-        # 레포 밖인지는 링크를 따라간 자리로 보고, 적는 경로는 링크 그대로 둔다. 링크가 가리키는 곳이 바뀌는 것도 변경이다
+        # 링크면 링크 자체와 링크가 가리키는 자리를 둘 다 적는다. 가리키는 곳이 바뀌는 것도, 그곳의 내용이 바뀌는 것도 변경이다
         real = os.path.relpath(os.path.realpath(os.path.join(cwd, p)), top)
         full = os.path.normpath(os.path.join(cwd, p))
         rel = os.path.relpath(os.path.join(os.path.realpath(os.path.dirname(full)), os.path.basename(full)), top)
         if any(r == ".." or r.startswith(".." + os.sep) for r in (real, rel)):
             sys.exit("레포 밖의 경로다: " + p)
-        if rel == "." or not os.path.exists(os.path.join(top, rel)):
+        if "." in (rel, real) or not os.path.exists(os.path.join(top, rel)):
             sys.exit("없는 경로다(레포 전체는 받지 않는다): " + p)
-        tracked = subprocess.run(["git", "ls-files", "--", rel], cwd=top, capture_output=True, text=True).stdout
-        if not tracked.strip():
-            sys.exit("git 이 추적하는 파일이 없는 경로다: " + p)
-        out.append(rel)
+        for one in dict.fromkeys((rel, real)):
+            tracked = subprocess.run(["git", "ls-files", "--", one], cwd=top, capture_output=True, text=True).stdout
+            if not tracked.strip():
+                sys.exit("git 이 추적하는 파일이 없는 경로다: " + p)
+            out.append(one)
     need_clean(cwd, out)
     return out
 
