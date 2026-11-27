@@ -168,6 +168,99 @@ class ReportTextTest(unittest.TestCase):
         self.assertIn("기록 파일", hardener)
 
 
+BODY_WORD = re.compile(r"본문|PR body|本文|正文")
+
+
+def sentences(text):
+    """글을 문장으로 나눈다. 줄바꿈과 문장 끝 마침표(., 。)에서 끊는다."""
+    return [s for s in re.split(r"(?<=\.)\s+|(?<=。)|\n", text) if s.strip()]
+
+
+def pastes_full_into_body(text):
+    """PR 본문을 말하는 문장이 기록 전문(`show --full`)도 말하면 그 문장들. 전문을 본문에 붙이게 하는 글이다."""
+    return [s for s in sentences(text) if BODY_WORD.search(s) and "--full" in s]
+
+
+class PrBodyTextTest(unittest.TestCase):
+    """PR 본문은 사람이 읽는 요약이다. 기록 전문을 붙였더니 본문이 13만 자가 되어 GitHub 한도(65,536자)에 걸렸다."""
+
+    def setUp(self):
+        self.pr = read("skills/job/stages/pr.md")
+
+    def test_어느_글도_PR_본문에_기록_전문을_붙이게_하지_않는다(self):
+        found = []
+        for rel in plugin_files() + ["README.md", "README.en.md", "README.ja.md", "README.zh.md"]:
+            found += ["%s: %s" % (rel, s) for s in pastes_full_into_body(read(rel))]
+        self.assertEqual(found, [])
+
+    def test_검사가_전문을_본문에_붙이는_옛_문장을_잡는다(self):
+        for old in ("2. 커밋하고 push 하고, 브랜치에 PR 이 없으면 연다. 본문 맨 앞에 결과를 쓰고, 그 아래에 "
+                    "`job.py show --full` 의 출력을 붙인다(로그 파일은 이 맥에만 있어서 내용째 붙인다).",
+                    "- 기록을 볼 때는 `job.py show` 를 쓴다. `job.py show --full` 은 PR 본문과 PR 댓글에 붙일 때만 돌린다.",
+                    "--full 이면 명령 전문도 붙인다. PR 본문에는 --full 을 붙인다.",
+                    "Paste the `job.py show --full` output into the PR body."):
+            self.assertTrue(pastes_full_into_body(old), old)
+        for new in ("본문은 사람이 읽는 요약이다. 기록 전문은 보고 단계에서 PR 댓글로 단다.",
+                    "PR 이 있으면 `job.py show --full | gh pr comment <PR 번호> --body-file -` 로 단다."):
+            self.assertFalse(pastes_full_into_body(new), new)
+
+    def test_PR_단계는_명령_출력을_본문에_붙이지_않고_전문은_댓글로_돌린다(self):
+        self.assertNotIn("show --full", self.pr)
+        self.assertNotIn("내용째 붙인다", self.pr)
+        self.assertIn("요약", self.pr)
+        self.assertIn("댓글", self.pr)
+
+    def test_PR_본문에는_중요한_것만_요약해_둔다(self):
+        for word in ("결과", "중요한 것", "되돌릴 수 있는가", "고른 것과 이유", "고치지 못한 것", "완료 기준", "한 줄"):
+            self.assertIn(word, self.pr)
+
+    def test_dispatch_는_PR_본문에서_기록_전문을_찾지_않는다(self):
+        dispatch = read("skills/dispatch/SKILL.md")
+        self.assertNotIn("PR 본문", section(dispatch, "4. 완료 판단"))
+        self.assertNotIn("결과는 PR(본문과 기록 댓글)에 남는다", dispatch)
+
+    def test_기록_댓글이_실패하면_hardener_와_보고는_기록_파일을_가리킨다(self):
+        # 본문에 전문이 없으니, PR 은 있어도 댓글이 실패하면 기록 전문은 `show --save` 의 파일에만 있다
+        dispatch = section(read("skills/dispatch/SKILL.md"), "4. 완료 판단")
+        self.assertNotIn("PR 이 없으면 기록 파일의 경로를 준다", dispatch)
+        self.assertIn("댓글이 실패했으면 기록 파일의 경로를 준다", dispatch)
+        hardener = read("agents/hardener.md")
+        self.assertNotIn("PR 이 없으면 기록 파일", hardener)
+        self.assertIn("댓글이 실패했으면 기록 파일", hardener)
+        report = step(read("skills/job/SKILL.md"), "보고")
+        self.assertNotIn("(PR 이 없으면 `show --save`", report)
+        self.assertIn("댓글이 실패했으면 `show --save`", report)
+
+
+class CommitTextTest(unittest.TestCase):
+    """커밋은 끝에 한 번이 아니라 뜻이 갈리는 단계마다 나눈다. 세부는 커밋이 맡고 PR 본문은 요약한다."""
+
+    def setUp(self):
+        self.commit = section(read("skills/job/SKILL.md"), "커밋")
+
+    def test_job_은_뜻이_갈리는_단계마다_커밋하고_메시지에_무엇을_왜를_쓴다(self):
+        for word in ("실패하는 테스트", "구현", "막는 지적", "사소한 지적", "무엇을 왜"):
+            self.assertIn(word, self.commit)
+
+    def test_리뷰_뒤에는_고칠_때만_커밋하고_사소한_지적은_한_커밋으로_모은다(self):
+        self.assertIn("--minor", self.commit)  # --minor 는 앞 리뷰 뒤 커밋이 하나일 때만 받는다
+        self.assertIn("한 커밋", self.commit)
+
+    def test_병합_방식과_메시지_형식은_레포_규칙에_맡긴다(self):
+        self.assertIn("레포의 규칙", self.commit)
+
+    def test_테스트_먼저_단계는_실패하는_테스트만_따로_커밋한다(self):
+        text = read("skills/job/stages/test-first.md")
+        self.assertIn("테스트만 담아 커밋", text)
+        self.assertIn("구현 커밋에 함께 담는다", text)  # 커밋 검사가 실패하는 테스트를 받지 않는 레포
+
+    def test_리뷰_단계는_막는_지적마다_커밋을_나눈다(self):
+        self.assertIn("지적마다 커밋", step(read("skills/job/stages/review.md"), "막는 지적만 고친다."))
+
+    def test_PR_단계에서_몰아_커밋하지_않는다(self):
+        self.assertNotIn("커밋하고 push", read("skills/job/stages/pr.md"))
+
+
 class DispatchRemoteTest(unittest.TestCase):
     def setUp(self):
         self.text = read("skills/dispatch/SKILL.md")
