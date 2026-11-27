@@ -97,7 +97,10 @@ def segments(command):
     """명령 줄을 실제로 실행될 단순 명령 조각(토큰 목록)들로 나눈다. 앞에 붙은 환경 변수 지정은 뗀다.
     인용된 글자, heredoc 본문, 주석은 명령으로 치지 않는다. 해석하지 못하면 ValueError.
     shlex 가 못 읽는 bash 의 $'...' 는 빈 따옴표로 바꿔 읽는다. 인용된 글자라 명령으로 치지 않는 것은 같다."""
-    lex = shlex.shlex(without_comments(without_ansi_c(without_heredoc_bodies(command))), posix=True,
+    # 리다이렉트에 붙은 fd 번호(2>, 1>&2)를 뗀다. shlex 는 「3 >」과 「3>」을 같은 낱말로 나눠, 나눈 뒤에는
+    # 띄어 쓴 인자(gh pr merge 3 >/dev/null 의 PR 번호)와 가를 수 없다
+    command = re.sub(r"(?<![\w$-])\d+(?=[<>])", "", without_heredoc_bodies(command))
+    lex = shlex.shlex(without_comments(without_ansi_c(command)), posix=True,
                       punctuation_chars=PUNCTUATION)
     lex.whitespace_split = True
     lex.whitespace = " \t\r"  # 줄바꿈은 명령을 나누는 글자로 읽는다
@@ -127,9 +130,7 @@ def without_redirects(seg):
     while i < len(seg):
         tok = seg[i]
         if tok and set(tok) <= set("<>&"):
-            if out and out[-1].isdigit():
-                out.pop()  # 2>&1 의 2
-            i += 2  # 리다이렉트와 그 대상
+            i += 2  # 리다이렉트와 그 대상. 리다이렉트에 붙은 fd 번호(2>&1 의 2)는 segments 가 먼저 뗐다
             continue
         out.append(tok)
         i += 1
