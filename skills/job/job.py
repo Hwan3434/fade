@@ -67,6 +67,8 @@ FADE_MISTAKES 를 정하지 않은 동안 쓰지 않는다. PR 을 기록하면 
                                          파일(워크트리가 지워져도 남는다)에 쓰고 그 절대 경로만 찍는다. PR 이 없거나 기록 댓글이
                                          실패한 작업의 보고가 가리킨다
 """
+import contextlib
+import fcntl
 import json
 import os
 import re
@@ -271,6 +273,16 @@ def under_temp(path):
     return any(real == r or real.startswith(r + os.sep) for r in roots)
 
 
+@contextlib.contextmanager
+def mistakes_lock(path):
+    """실수 기록은 여러 세션(워커, 훅)이 함께 쓴다. 붙이기와 다시 쓰기(pr, mark)가 같은 잠금을 잡아,
+    다시 쓰는 사이 붙은 줄을 잃지 않게 한다."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path + ".lock", "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        yield
+
+
 def mistake_rows():
     path = mistakes_path()
     if not os.path.exists(path):
@@ -306,8 +318,7 @@ def add_mistake(cwd, state, source, what, key=""):
     row = {"time": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "repo": repo, "branch": branch(cwd),
            "pr": state.get("pr") or "", "source": source, "what": what, "key": key, "handled": ""}
     path = mistakes_path()
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "a", encoding="utf-8") as f:
+    with mistakes_lock(path), open(path, "a", encoding="utf-8") as f:
         f.write(json.dumps(row, ensure_ascii=False) + "\n")
     return path
 
@@ -318,8 +329,21 @@ def fill_pr(cwd, state):
     path, repo, now, since = mistakes_path(), main_checkout(cwd), branch(cwd), int(state.get("started") or 0)
     if not os.path.exists(path):
         return
+    with mistakes_lock(path):
+        rewrite(path, lambda lines: fill_lines(lines, state["pr"], repo, now, since))
+
+
+def rewrite(path, change):
+    """잠금을 잡은 채로 부른다. 줄 목록을 change 로 고쳐 바뀌었으면 통째로 바꿔 쓴다."""
     with open(path, encoding="utf-8") as f:
         lines = f.read().splitlines()
+    if change(lines):
+        with open(path + ".tmp", "w", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")
+        os.replace(path + ".tmp", path)
+
+
+def fill_lines(lines, pr, repo, now, since):
     changed = False
     for i, line in enumerate(lines):
         if not line.strip():
@@ -331,30 +355,33 @@ def fill_pr(cwd, state):
             continue
         if row.get("pr") or row.get("repo") != repo or row.get("branch") != now or at_ < since:
             continue
-        row["pr"] = state["pr"]
+        row["pr"] = pr
         lines[i] = json.dumps(row, ensure_ascii=False)
         changed = True
-    if changed:
-        with open(path + ".tmp", "w", encoding="utf-8") as f:
-            f.write("\n".join(lines) + "\n")
-        os.replace(path + ".tmp", path)
+    return changed
 
 
 def mark(args):
     if len(args) < 3 or args[1] not in ("key", "handled"):
         sys.exit("job.py mark <줄 번호> key|handled <값>")
     path = mistakes_path()
-    lines = open(path, encoding="utf-8").read().splitlines() if os.path.exists(path) else []
-    if not args[0].isdigit() or not 1 <= int(args[0]) <= len(lines):
-        sys.exit("실수 기록에 없는 줄이다: %s (%d줄)" % (args[0], len(lines)))
-    n = int(args[0]) - 1
-    row = json.loads(lines[n])
-    row[args[1]] = args[2]
-    lines[n] = json.dumps(row, ensure_ascii=False)
-    with open(path + ".tmp", "w", encoding="utf-8") as f:
-        f.write("\n".join(lines) + "\n")
-    os.replace(path + ".tmp", path)
-    print("%d: %s" % (n + 1, lines[n]))
+    if not os.path.exists(path):
+        sys.exit("실수 기록에 없는 줄이다: %s (0줄)" % args[0])
+    done = []
+
+    def change(lines):
+        if not args[0].isdigit() or not 1 <= int(args[0]) <= len(lines):
+            sys.exit("실수 기록에 없는 줄이다: %s (%d줄)" % (args[0], len(lines)))
+        n = int(args[0]) - 1
+        row = json.loads(lines[n])
+        row[args[1]] = args[2]
+        lines[n] = json.dumps(row, ensure_ascii=False)
+        done.append("%d: %s" % (n + 1, lines[n]))
+        return True
+
+    with mistakes_lock(path):
+        rewrite(path, change)
+    print(done[0])
 
 
 def status(state):
