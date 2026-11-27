@@ -253,7 +253,8 @@ def head_problem(cwd, merge_args):
             "맞춘 뒤 그 커밋에서 다시 검증하고 병합한다" % (job.short(remote), job.short(local)))
 
 
-MERGE_WORDS = re.compile(r"\bgh\s+pr\s+merge\b|\bgit\b.*\b(merge|pull|push)\b")
+# git 바로 뒤(값이 붙는 -C, -c 만 건너뛴다)에 하위 명령으로 온 merge·pull·push 만 병합이다. 메시지 속 글자는 아니다
+MERGE_WORDS = re.compile(r"\bgh\s+pr\s+merge\b|\bgit(?:\s+-[Cc]\s+\S+)*\s+(?:merge|pull|push)\b")
 
 
 def problems(command, cwd):
