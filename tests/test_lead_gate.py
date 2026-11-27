@@ -50,6 +50,15 @@ class Base(unittest.TestCase):
             f.write("\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + "\n")
         return path
 
+    def restamp(self, path, at):
+        """세션 기록의 모든 줄의 시각을 at 으로 바꾼다."""
+        with open(path, encoding="utf-8") as f:
+            rows = [json.loads(l) for l in f]
+        for r in rows:
+            r["timestamp"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(at))
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + "\n")
+
     def own(self, first="작업해 줘"):
         """이 작업을 시작한 세션의 기록."""
         return self.transcript(first, ["cd %s && job.py start --unattended \"작업\"" % self.wt])
@@ -108,14 +117,18 @@ class LeadOnlyTest(Base):
                         'cd %s && uv run job.py contrasted x' % self.wt, 'cd %s && python3 -W ignore job.py hardened x' % self.wt):
             self.assertIsNotNone(self.gate(command, self.own()), command)
 
+    def test_오래_기다린_뒤에_돈_폴더_모르는_start_도_이_세션의_시작으로_본다(self):
+        # 기록의 시각은 명령을 낸 때이고 started 는 job.py 가 돈 때다. 승인 대기나 앞 명령으로 몇 분 벌어질 수 있다
+        self.start("--unattended")
+        own = self.transcript(commands=['npm ci && cd "$WT" && job.py start --unattended "작업"'])
+        self.restamp(own, time.time() - 1200)  # 명령을 낸 지 20분 뒤에 start 가 돌았다
+        self.assertIsNotNone(self.gate('cd %s && job.py human-done 1 "봤다"' % self.wt, own))
+
     def test_오래전에_폴더_모르게_돈_start_는_이_작업의_시작이_아니다(self):
         # 셸 변수 폴더의 start 는 이 작업이 시작된 때에 찍힌 것만 「그럴 수 있음」으로 본다
         self.start("--unattended")
         lead = self.transcript(commands=['cd "$OLD" && job.py start "예전 작업"'])
-        with open(lead, encoding="utf-8") as f:
-            text = f.read().replace(time.strftime("%Y-%m-%dT", time.gmtime()), "2020-01-01T")
-        with open(lead, "w", encoding="utf-8") as f:
-            f.write(text)
+        self.restamp(lead, time.time() - 30 * 24 * 3600)
         self.assertIsNone(self.gate('cd %s && job.py hardened "제안 없음"' % self.wt, lead))
 
     def test_첫_사용자_글의_앞_조각이_메타_글이어도_dispatch_지시문을_찾는다(self):

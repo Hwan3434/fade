@@ -80,6 +80,7 @@ class ParseTest(Repo):
 
     def test_산술의_시프트와_따옴표_안의_꺾쇠_둘은_heredoc_이_아니다(self):
         for command in ("echo $((1<<2))\ngit merge feat/x", "n=$((1<<bits))\ngit merge feat/x", "((x<<=y))\ngit merge feat/x",
+                        "echo $(( (1<<n) + 1 ))\ngit merge feat/x",
                         'git commit -m "use a<<b"\ngit merge feat/x',
                         "python3 -c 'print(1 << 2)'\ngit merge feat/x"):
             self.denied(command, self.main)

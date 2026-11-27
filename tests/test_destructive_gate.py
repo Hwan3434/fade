@@ -109,6 +109,7 @@ class DestructiveGateTest(unittest.TestCase):
     def test_같은_줄에서_만든_폴더로_cd_한_뒤의_삭제는_그_폴더로_본다(self):
         # 글자로 적은 경로는 아직 없어도 그 경로로 푼다. 알 수 없는 것은 셸 변수와 명령 치환뿐이다
         self.assertAllowed("mkdir -p out && cd out && rm -rf *")
+        self.assertAllowed("mkdir -p out && cd out &&\nrm -rf *")
         self.assertBlocked("cd ~/no-such-dir/.. && rm -rf *")
 
     def test_없는_폴더로의_cd_가_실패해도_이어_도는_rm_은_앞_폴더에서_본다(self):
