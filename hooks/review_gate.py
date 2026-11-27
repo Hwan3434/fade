@@ -23,6 +23,15 @@ from merge_gate import job  # noqa: E402
 
 MARKER = "## Phase 0 — Gather the diff"  # code-review 지시문의 머리. 앱은 본체 기록에, CLI 는 하위 에이전트 기록에 남긴다
 READ_PREFIX = re.compile(r"^ *\d+\t")  # Read 결과 줄의 번호 머리(cat -n 꼴)
+SLASH = "<command-name>/code-review</command-name>"  # 사용자가 /code-review 로 부른 흔적
+
+
+def calls_review(part):
+    """code-review 를 부른 흔적인가: Skill 도구 호출이나 사용자의 /code-review."""
+    if part["type"] == "tool_use":
+        skill = (part.get("input") or {}).get("skill") or "" if part.get("name") == "Skill" else ""
+        return skill == "code-review" or skill.endswith(":code-review")
+    return part["type"] == "text" and SLASH in (part.get("text") or "")
 
 
 def is_review(seg):
@@ -77,14 +86,16 @@ def output_lines(part):
 
 
 def seen_in(path, since):
-    """이 기록 파일에서 code-review 지시문 뒤에 받은 도구 출력의 줄들. 지시문이 없으면 None."""
-    seen = None
+    """이 기록 파일에서 code-review 지시문 뒤에 받은 도구 출력의 줄들(지시문이 없으면 None)과, code-review 를 부른 흔적이
+    있는가."""
+    seen, called = None, False
     for part in rows(path, since):
+        called = called or calls_review(part)
         if part["type"] == "text" and MARKER in (part.get("text") or ""):
             seen = set()  # 다시 지시문이 나오면 그 뒤의 리뷰만 본다
         elif seen is not None and part["type"] == "tool_result" and not part.get("is_error"):
             seen |= output_lines(part)
-    return seen
+    return seen, called
 
 
 def spans(numbers):
@@ -126,9 +137,10 @@ def review_problem(state, wt, transcript):
     previous = state.get("review") or {}
     since = previous.get("at") or state.get("started") or 0
     files = [transcript] + sorted(glob.glob(os.path.join(transcript[:-len(".jsonl")], "subagents", "*.jsonl")))
-    best, reviewed = None, False
+    best, reviewed, called = None, False, False
     for f in files:
-        seen = seen_in(f, since)
+        seen, call = seen_in(f, since)
+        called = called or call
         if seen is None:
             continue
         reviewed = True
@@ -137,6 +149,9 @@ def review_problem(state, wt, transcript):
             return None
         best = missing if best is None or len(missing) < len(best) else best
     after = "앞 리뷰" if previous else "작업 시작"
+    if not reviewed and called:
+        raise Unjudged("code-review 를 부른 흔적은 있는데 그 지시문의 머리 글(%s)을 찾지 못했다. code-review 스킬의 글이 "
+                       "바뀌었을 수 있다. fade 의 review_gate.py 의 MARKER 를 맞춰야 한다" % MARKER)
     if not reviewed:
         return ("%s 뒤의 세션 기록에 code-review 가 돈 흔적이 없다. code-review 를 수준과 대상을 적어 부르고"
                 "(`medium .fade-review/bug.patch`), 그 리뷰가 bug.patch 를 끝까지 읽은 뒤 남긴다" % after)
