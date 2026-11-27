@@ -19,10 +19,11 @@ FADE_MISTAKES 를 정하지 않은 동안 쓰지 않는다. PR 을 기록하면 
                                          그 앞에 -- 를 따로 둔다. 그 뒤의 인자는 모두 값이다 (job.py stop -- --x)
   job.py scope   merge|pr                범위를 바꾼다 (사용자가 범위를 바꿨을 때)
   job.py red     <테스트 명령>           명령을 돌려 실패할 때만 기록하고 실패 출력의 끝을 찍는다 (구현 전).
-                                         그때 커밋 전 변경이 있던 파일(쓰는 중인 테스트)도 적는다
-  job.py green                           red 의 명령을 다시 돌려 통과할 때만 기록한다 (구현 후). red 뒤에 red 때
-                                         커밋 전 변경이 있던 파일 말고 바뀐 파일이 없으면 받지 않는다(구현이 red 전에
-                                         이미 있었거나, 테스트만 고쳐 통과시켰다)
+                                         그때 커밋 전 변경이 있던 파일(쓰는 중인 테스트)과 그 내용도 적는다
+  job.py green                           red 의 명령을 다시 돌려 통과할 때만 기록한다 (구현 후). red 뒤에 내용이 바뀐
+                                         파일이 없으면 받지 않는다(구현이 red 전에 이미 있었거나 레포 밖이 바뀌었다).
+                                         구현이 red 전에 커밋돼 있었거나 테스트만 고쳐 통과시킨 것은 어느 파일이 테스트인지
+                                         레포마다 달라 가르지 못한다
   job.py no-test <이유>                  레포에 테스트 실행 장치가 없을 때 red·green 대신 이유를 적는다
   job.py evidence <완료 기준> <파일>... [--paths <경로>...]
                                          스크린샷, 로그 같은 증거 파일을 기준에 붙인다. 이 레포 밖의 OS 임시 폴더에 있는
@@ -152,9 +153,16 @@ def tail_of(text):
 
 
 def pending(cwd):
-    """커밋 전 변경이 있거나 추적하지 않는 파일(레포 기준 경로)."""
+    """커밋 전 변경이 있거나 추적하지 않는 파일(레포 기준 경로)과 그 내용의 해시(지워졌으면 빈 글)."""
     tracked = subprocess.run(["git", "diff", "--name-only", "HEAD"], cwd=top_dir(cwd), capture_output=True, text=True).stdout
-    return sorted(set(tracked.split("\n") + untracked(cwd)) - {""})
+    return {p: content(cwd, p) for p in sorted(set(tracked.split("\n") + untracked(cwd)) - {""})}
+
+
+def content(cwd, rel):
+    path = os.path.join(top_dir(cwd), rel)
+    if not os.path.isfile(path):
+        return ""
+    return subprocess.run(["git", "hash-object", "--", rel], cwd=top_dir(cwd), capture_output=True, text=True).stdout.strip()
 
 
 def untracked(cwd):
@@ -163,12 +171,14 @@ def untracked(cwd):
 
 
 def changed_since(cwd, red):
-    """red 를 찍은 뒤 바뀐 파일 가운데 red 때 커밋 전 변경이 없던 것. red 의 커밋이 사라졌으면 None(판정하지 않는다)."""
+    """red 를 찍은 뒤 내용이 바뀐 파일. red 때 커밋 전 변경이 있던 파일은 그때의 내용과 견준다(테스트와 구현이 한
+    파일이어도 red 뒤에 더 고치면 바뀐 것이다). red 의 커밋이 사라졌으면 None(판정하지 않는다)."""
     if red["head"] == "(커밋 없음)" or not is_ancestor(cwd, red["head"], "HEAD"):
         return None
+    before = red.get("pending") or {}
     tracked = subprocess.run(["git", "diff", "--name-only", red["head"]], cwd=top_dir(cwd), capture_output=True,
                              text=True).stdout.split("\n")
-    return sorted(set(tracked + untracked(cwd)) - {""} - set(red.get("pending", [])))
+    return [p for p in sorted(set(tracked + untracked(cwd)) - {""}) if p not in before or content(cwd, p) != before[p]]
 
 
 def fenced(text):
@@ -701,9 +711,9 @@ def main(argv):
             sys.exit("테스트가 아직 통과하지 않는다 (종료 코드 %d)\n%s" % (code, tail_of(out)))
         impl = changed_since(cwd, state["red"])
         if impl == []:
-            sys.exit("red 뒤에 red 때 커밋 전 변경이 있던 파일(%s) 말고 바뀐 파일이 없다. 구현이 red 전에 이미 있었거나, "
-                     "테스트만 고쳐 통과시켰거나, 레포 밖의 무엇이 바뀌어 통과했다. 구현을 뺀 채 테스트만 둔 상태에서 red 를 다시 찍는다"
-                     % (", ".join(state["red"].get("pending", [])) or "없음"))
+            sys.exit("red 뒤에 내용이 바뀐 파일이 없다(red 때 커밋 전 변경이 있던 파일 %s 도 그때 내용 그대로다). 구현이 red 전에 "
+                     "이미 있었거나, 레포 밖의 무엇이 바뀌어 통과했다. 구현을 뺀 채 테스트만 둔 상태에서 red 를 다시 찍는다"
+                     % (", ".join(state["red"].get("pending") or {}) or "없음"))
         state["green"] = {"head": head(cwd), "dirty": dirty(cwd), "tail": tail_of(out)}
         said = "green 을 기록했다: %s 통과 (커밋 %s)" % (name_of(state["red"]), at(state["green"]))
     elif cmd == "no-test":
