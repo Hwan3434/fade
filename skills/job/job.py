@@ -45,7 +45,9 @@ FADE_MISTAKES 를 정하지 않은 동안 쓰지 않는다. PR 을 기록하면 
                                          (더한 줄 + 뺀 줄), 셋째 줄부터는 파일마다 더한 줄, 뺀 줄, 경로다. 명세 리뷰어에게 줄 show
                                          출력과 diff 를 워크트리 안 .fade-review/ (git 이 무시하는 폴더)에 쓴다. 명세 리뷰어가 본
                                          커밋이 있으면 그 뒤에 고친 부분만, 없으면 base 와의 전체를 쓴다(둘째 줄이 어느 쪽인지 알린다).
-                                         계획서 원문은 부르는 쪽이 plan.md 로 쓴다
+                                         계획서 원문은 부르는 쪽이 plan.md 로 쓴다. 레포가 .gitattributes 에 linguist-generated,
+                                         -diff, binary 로 표시한 파일은 두 diff 에서 빼고 이름과 줄 수를 알린다. bug.patch 가
+                                         20000자를 넘으면 파일 경계에서 나눈 조각을 .fade-review/parts/ 에도 쓴다
   job.py review  <남은 막는 지적 수> [<요약>] [--spec | --minor] [--dropped=<수>]
                                          코드 리뷰 결과. 지금 커밋에서 남은 막는 지적이 0 이어야 병합한다.
                                          앞 리뷰보다 수가 줄었으면 그 사이 slip 이나 새 red 가 있어야 받는다. 오탐이나
