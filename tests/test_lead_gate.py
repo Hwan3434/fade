@@ -1,0 +1,179 @@
+"""사람과 리드만 하는 일(사람이 볼 것 풀기, 대조와 hardener 기록, 병합된 워커의 워크트리 지우기)을 job 을 돈 세션이
+스스로 하지 못하게 하는 훅과 그 기록 명령을 본다. 명령은 어느 것도 실행하지 않고, 훅에 JSON 입력만 넣는다."""
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import unittest
+
+from helpers import ROOT, git_repo, job
+
+LEAD = os.path.join(ROOT, "hooks", "lead_gate.py")
+DISPATCHED = "fade:job 스킬로 아래 계획서를 수행한다. 사용자: 없음\n\n# 작업: x"
+
+
+def git(cwd, *args):
+    subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid", *args], cwd=cwd, check=True,
+                   capture_output=True)
+
+
+class Base(unittest.TestCase):
+    def setUp(self):
+        repo = git_repo()
+        self.addCleanup(repo.cleanup)
+        self.main = os.path.realpath(repo.name)
+        git(self.main, "commit", "-q", "--allow-empty", "-m", "x")
+        git(self.main, "switch", "-q", "-C", "main")  # git init 의 기본 브랜치 이름과 같아도 된다
+        self.wt = os.path.join(self.main, ".claude", "worktrees", "x")
+        git(self.main, "worktree", "add", "-q", "-b", "feat/x", self.wt)
+        logs = tempfile.TemporaryDirectory()
+        self.addCleanup(logs.cleanup)
+        self.logs = logs.name
+
+    def start(self, *extra):
+        r = job(self.wt, "start", "작업", *extra)
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def transcript(self, first="작업해 줘", commands=(), cwd=None):
+        """세션 기록 파일: 첫 사용자 글과 Bash 호출들."""
+        path = os.path.join(self.logs, "s%d.jsonl" % len(os.listdir(self.logs)))
+        rows = [{"type": "user", "timestamp": "2026-01-01T00:00:00Z", "cwd": cwd or self.main,
+                 "message": {"role": "user", "content": first}}]
+        for c in commands:
+            rows.append({"type": "assistant", "timestamp": "2026-01-01T00:00:01Z", "cwd": cwd or self.main,
+                         "message": {"role": "assistant", "content": [
+                             {"type": "tool_use", "id": "t", "name": "Bash", "input": {"command": c}}]}})
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + "\n")
+        return path
+
+    def own(self, first="작업해 줘"):
+        """이 작업을 시작한 세션의 기록."""
+        return self.transcript(first, ["cd %s && job.py start --unattended \"작업\"" % self.wt])
+
+    def gate(self, command, transcript, cwd=None):
+        payload = {"hook_event_name": "PreToolUse", "tool_name": "Bash", "cwd": cwd or self.main,
+                   "transcript_path": transcript, "tool_input": {"command": command}}
+        r = subprocess.run([sys.executable, LEAD], input=json.dumps(payload), capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        out = json.loads(r.stdout)["hookSpecificOutput"] if r.stdout.strip() else None
+        return out["permissionDecisionReason"] if out and out.get("permissionDecision") == "deny" else None
+
+
+class LeadOnlyTest(Base):
+    """사람 없는 작업을 돈 세션(그 하위 에이전트 포함)은 사람이 볼 것을 풀거나 대조와 hardener 를 기록하지 못한다."""
+
+    def test_사람_없는_작업을_돈_세션은_스스로_풀지_못한다(self):
+        self.start("--unattended")
+        own = self.own()
+        for command in ('cd %s && job.py human-done 1 "화면을 봤다"' % self.wt,
+                        'cd %s && job.py contrasted "기준 셋 모두 맞음"' % self.wt,
+                        'cd %s && job.py hardened "제안 없음"' % self.wt,
+                        'cd %s >/dev/null && python3 /x/skills/job/job.py human-done 1 "봤다"' % self.wt):
+            reason = self.gate(command, own)
+            self.assertIsNotNone(reason, command)
+            self.assertIn("스스로", reason)
+        self.assertIsNotNone(self.gate('job.py human-done 1 "봤다"', own, cwd=self.wt))
+
+    def test_다른_세션과_사람이_있는_작업의_세션은_푼다(self):
+        self.start("--unattended")
+        lead = self.transcript(commands=["git worktree list"])
+        self.assertIsNone(self.gate('cd %s && job.py human-done 1 "리드가 화면을 봤다"' % self.wt, lead))
+        self.assertIsNone(self.gate('cd %s && job.py contrasted "맞음"' % self.wt, lead))
+
+    def test_사람이_있는_작업은_그_세션도_푼다(self):
+        self.start()
+        self.assertIsNone(self.gate('cd %s && job.py human-done 1 "사용자가 봤다"' % self.wt, self.own()))
+
+    def test_세션_기록이_없으면_막지_않는다(self):
+        self.start("--unattended")
+        self.assertIsNone(self.gate('cd %s && job.py human-done 1 "봤다"' % self.wt, ""))
+
+
+class RemoveTest(Base):
+    """병합된 워커의 워크트리는 리드의 대조와 hardener 기록이 있어야 지운다. 스스로 시작한 작업(nonstop)의 정리,
+    병합되지 않은 작업(닫힌 PR), job 기록이 없는 워크트리는 막지 않는다."""
+
+    def merged(self):
+        self.start("--unattended")
+        self.assertEqual(job(self.wt, "merged", "abc1234", "CI 통과").returncode, 0)
+
+    def removals(self):
+        return ("git worktree remove %s" % self.wt, "git worktree remove --force .claude/worktrees/x",
+                "git -C %s worktree remove %s" % (self.main, self.wt), "rm -rf %s" % self.wt,
+                "cd %s && rm -rf x" % os.path.dirname(self.wt))
+
+    def test_리드의_기록이_없으면_다른_세션이_지우지_못한다(self):
+        self.merged()
+        lead = self.transcript(commands=["gh pr view 3"])
+        for command in self.removals():
+            reason = self.gate(command, lead)
+            self.assertIsNotNone(reason, command)
+            self.assertIn("job.py contrasted", reason)
+            self.assertIn("job.py hardened", reason)
+
+    def test_대조와_hardener_를_기록하면_지운다(self):
+        self.merged()
+        lead = self.transcript()
+        self.assertEqual(job(self.wt, "contrasted", "완료 기준 셋 모두 증거와 맞다").returncode, 0)
+        self.assertIsNotNone(self.gate(self.removals()[0], lead))  # hardener 가 아직이다
+        self.assertEqual(job(self.wt, "hardened", "제안 없음").returncode, 0)
+        for command in self.removals():
+            self.assertIsNone(self.gate(command, lead), command)
+        show = job(self.wt, "show").stdout
+        self.assertIn("완료 기준 셋 모두 증거와 맞다", show)
+        self.assertIn("제안 없음", show)
+
+    def test_스스로_시작한_작업의_정리는_막지_않는다(self):
+        self.merged()
+        self.assertIsNone(self.gate(self.removals()[0], self.own("/fade:nonstop 목록대로 해")))
+
+    def test_dispatch_로_띄운_워커는_자기_워크트리도_지우지_못한다(self):
+        self.merged()
+        self.assertIsNotNone(self.gate(self.removals()[0], self.own(DISPATCHED)))
+
+    def test_병합되지_않은_작업과_기록이_없는_워크트리는_막지_않는다(self):
+        self.start("--unattended")
+        self.assertIsNone(self.gate(self.removals()[0], self.transcript()))
+        other = os.path.join(self.main, ".claude", "worktrees", "y")
+        git(self.main, "worktree", "add", "-q", "-b", "feat/y", other)
+        self.assertIsNone(self.gate("git worktree remove " + other, self.transcript()))
+
+    def test_워크트리_안의_파일이나_하위_폴더_삭제는_막지_않는다(self):
+        self.merged()
+        self.assertIsNone(self.gate("rm -rf %s/.fade-review" % self.wt, self.transcript()))
+
+
+class RecordTest(Base):
+    """사람이 볼 것을 푼 근거와 리드의 대조, hardener 결과가 기록과 show 에 남는다."""
+
+    def test_human_done_은_그_항목을_풀고_누가_무엇을_근거로_풀었는지_남긴다(self):
+        self.start("--unattended")
+        job(self.wt, "human", "앱 화면은 사람이 본다")
+        job(self.wt, "human", "알림 소리는 사람이 듣는다")
+        shot = os.path.join(self.wt, "shot.png")
+        open(shot, "w").close()
+        r = job(self.wt, "human-done", "1", "리드가 시뮬레이터 화면을 봤다", shot)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        check = job(self.wt, "check").stdout
+        self.assertNotIn("앱 화면은 사람이 본다", check)
+        self.assertIn("알림 소리는 사람이 듣는다", check)
+        show = job(self.wt, "show", "--full").stdout
+        self.assertIn("리드가 시뮬레이터 화면을 봤다", show)
+        self.assertIn(shot, show)
+
+    def test_없는_번호와_빈_근거는_받지_않는다(self):
+        self.start()
+        job(self.wt, "human", "앱 화면")
+        self.assertNotEqual(job(self.wt, "human-done", "2", "봤다").returncode, 0)
+        self.assertNotEqual(job(self.wt, "human-done", "1", " ").returncode, 0)
+        self.assertNotEqual(job(self.wt, "contrasted", " ").returncode, 0)
+
+    def test_훅이_등록되어_있다(self):
+        with open(os.path.join(ROOT, "hooks", "hooks.json"), encoding="utf-8") as f:
+            self.assertIn("lead_gate.py", f.read())
+
+
+if __name__ == "__main__":
+    unittest.main()
