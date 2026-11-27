@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
 """`job.py review` 직전에 버그 축 리뷰(code-review)가 실제로 diff 를 읽었는지 세션 기록에서 본다.
 
-받은 앞 리뷰(없으면 작업 시작) 뒤의 세션 기록 파일들(본체와 하위 에이전트) 가운데, code-review 의 지시문이 나온 뒤
-같은 파일에서 diff 를 읽은 곳이 있어야 한다. 읽은 것으로 치는 것은 둘이다.
-- `job.py review-files` 가 이 커밋에서 쓴 `.fade-review/bug.patch` 의 모든 줄을 결과로 보여 준 Read 들(실패한 것은 빼고).
-  덮었는지는 Read 결과의 줄 번호로 센다. Read 는 limit 없이도 토큰 한도에 걸리면 앞부분만 돌려준다.
-- 범위를 준 `git diff` 로, 파일을 줄이지 않고(-- 경로, --stat 등) 출력이 잘리지 않은 것. 앞 리뷰가 없으면 base 와의
-  전체(`<base>...<브랜치>`)여야 한다.
+「읽었다」는 도구 이름이 아니라 내용으로 판정한다. 받은 앞 리뷰(없으면 작업 시작) 뒤의 세션 기록 파일들(본체와
+하위 에이전트) 가운데 code-review 의 지시문이 나온 파일에서, 그 뒤에 받은 도구 출력에 `job.py review-files` 가 쓴
+`.fade-review/bug.patch` 의 줄이 모두 들어 있어야 한다. cat, Read, git diff, 나눠 읽기 어느 것이든 같다. Read 의 줄
+번호 머리는 떼고 견준다. 잘린 출력(토큰 한도, head)은 앞부분 줄만 들어 있어 나머지를 읽은 것으로 치지 않는다.
 같은 파일이어야 하는 것은 명세 리뷰어(다른 하위 에이전트)가 읽은 것을 버그 축의 증거로 치지 않기 위해서다.
-job 기록이 없는 곳, OS 임시 폴더의 레포(써 보기, 테스트), 세션 기록 경로를 못 받거나 못 읽은 경우, 이 훅이 오류로
-죽은 경우에는 판정하지 않는다. 막으면 실수 기록에 한 줄 남긴다. 실수를 막는 난간이지 보안 경계가 아니다.
+막으면 보이지 않은 줄 범위를 알리고 실수 기록에 한 줄 남긴다.
+판정할 수 없으면(세션 기록이 없거나 못 읽음, bug.patch 가 없음, OS 임시 폴더 레포, 훅이 죽음) 막지 않되, 그 사실과
+이유를 에이전트(additionalContext)와 사용자(systemMessage)에게 알린다. 실수를 막는 난간이지 보안 경계가 아니다.
 """
 import datetime
 import glob
@@ -23,9 +22,7 @@ import merge_gate  # noqa: E402
 from merge_gate import job  # noqa: E402
 
 MARKER = "## Phase 0 — Gather the diff"  # code-review 지시문의 머리. 앱은 본체 기록에, CLI 는 하위 에이전트 기록에 남긴다
-NUMBERED = re.compile(r"^ *(\d+)\t", re.M)  # Read 결과의 줄 번호(cat -n 꼴). 토큰 한도로 잘리면 앞부분 번호만 온다
-SHORTENING = {"--stat", "--numstat", "--shortstat", "--name-only", "--name-status", "--dirstat", "--summary"}
-TRUNCATED = ("Output too large", "<persisted-output>")
+READ_PREFIX = re.compile(r"^ *\d+\t")  # Read 결과 줄의 번호 머리(cat -n 꼴)
 
 
 def is_review(seg):
@@ -65,71 +62,89 @@ def rows(path, since):
 def result_text(part):
     content = part.get("content")
     if isinstance(content, list):
-        return " ".join(c.get("text", "") for c in content if isinstance(c, dict))
+        return "\n".join(c.get("text", "") for c in content if isinstance(c, dict))
     return str(content or "")
 
 
-def whole_git_diff(command, cwd, first):
-    """범위를 주고 파일을 줄이지 않은 git diff 인가. 첫 리뷰면 base 와의 전체(... 범위)여야 한다."""
-    for _, seg in merge_gate.located(command, cwd):
-        if len(seg) < 2 or os.path.basename(seg[0]) != "git" or seg[1] != "diff":
-            continue
-        args = seg[2:]
-        if "--" in args or SHORTENING & {a.split("=", 1)[0] for a in args}:
-            continue
-        ranges = [a for a in args if ".." in a and not a.startswith("-")]
-        if ranges and (not first or any("..." in r for r in ranges)):
-            return True
-    return False
+def output_lines(part):
+    """도구 출력의 줄들. Read 의 줄 번호 머리(「12\t」)는 뗀다."""
+    return {READ_PREFIX.sub("", line).rstrip() for line in result_text(part).splitlines()}
 
 
-def seen_lines(part):
-    """Read 결과가 실제로 보여 준 줄 번호들. offset·limit 이 아니라 결과 글로 센다(limit 없이도 잘려 올 수 있다)."""
-    return {int(n) for n in NUMBERED.findall(result_text(part))}
-
-
-def evidence(path, since, wt, patch, total, first):
-    """이 기록 파일에 code-review 지시문 뒤의 diff 읽기가 있는가."""
-    started, calls, seen = False, {}, set()
+def seen_in(path, since):
+    """이 기록 파일에서 code-review 지시문 뒤에 받은 도구 출력의 줄들. 지시문이 없으면 None."""
+    seen = None
     for part in rows(path, since):
         if part["type"] == "text" and MARKER in (part.get("text") or ""):
-            started, calls, seen = True, {}, set()
-        elif started and part["type"] == "tool_use":
-            calls[part.get("id")] = part
-        elif started and part["type"] == "tool_result" and not part.get("is_error"):
-            call = calls.get(part.get("tool_use_id"))
-            if not call:
-                continue
-            given = call.get("input") or {}
-            if call.get("name") == "Read" and os.path.realpath(given.get("file_path", "")) == patch:
-                seen |= seen_lines(part)
-                if seen >= set(range(1, total + 1)):
-                    return True
-            elif call.get("name") == "Bash" and not any(t in result_text(part) for t in TRUNCATED):
-                if whole_git_diff(given.get("command") or "", wt, first):
-                    return True
-    return False
+            seen = set()  # 다시 지시문이 나오면 그 뒤의 리뷰만 본다
+        elif seen is not None and part["type"] == "tool_result" and not part.get("is_error"):
+            seen |= output_lines(part)
+    return seen
+
+
+def spans(numbers):
+    """줄 번호들을 「a-b」 범위 글로 묶는다."""
+    out, start, prev = [], None, None
+    for n in numbers:
+        if start is None:
+            start = prev = n
+        elif n == prev + 1:
+            prev = n
+        else:
+            out.append((start, prev))
+            start = prev = n
+    if start is not None:
+        out.append((start, prev))
+    return ", ".join("%d" % a if a == b else "%d-%d" % (a, b) for a, b in out)
+
+
+class Unjudged(Exception):
+    """판정할 수 없다. 막지 않고 이유를 알린다."""
 
 
 def review_problem(state, wt, transcript):
-    """버그 축이 diff 를 읽은 흔적이 없으면 그 이유. 판정할 수 없으면 None."""
-    if not transcript or not os.path.isfile(transcript):
-        return None
+    """버그 축이 diff 를 다 읽지 않았으면 막는 이유, 다 읽었으면 None. 판정할 수 없으면 Unjudged."""
+    if not transcript:
+        raise Unjudged("세션 기록 경로를 받지 못했다(세션 기록을 남기지 않는 실행)")
+    if not os.path.isfile(transcript):
+        raise Unjudged("세션 기록 파일이 없다: " + transcript)
     made = state.get("review_files") or {}
     if made.get("head") != job.head(wt):
         return ("bug.patch 가 이 커밋(%s)에서 만든 것이 아니다. `job.py review-files <base>` 로 다시 만들고, code-review 로 "
                 "`.fade-review/bug.patch` 를 끝까지 읽은 뒤 남긴다" % job.short(job.head(wt)))
+    patch = os.path.join(job.top_dir(wt), ".fade-review", "bug.patch")
+    if not os.path.isfile(patch):
+        raise Unjudged("bug.patch 가 없다. review-files 를 돌린 job.py 가 이 훅과 다른 판일 수 있다(PATH 의 job.py)")
+    with open(patch, encoding="utf-8", errors="replace") as f:
+        lines = f.read().splitlines()
+    wanted = {i + 1: line.rstrip() for i, line in enumerate(lines) if len(line.strip()) >= 2}
     previous = state.get("review") or {}
     since = previous.get("at") or state.get("started") or 0
-    patch = os.path.realpath(os.path.join(job.top_dir(wt), ".fade-review", "bug.patch"))
-    with open(patch, encoding="utf-8", errors="replace") as f:
-        total = len(f.read().splitlines())
     files = [transcript] + sorted(glob.glob(os.path.join(transcript[:-len(".jsonl")], "subagents", "*.jsonl")))
-    if any(evidence(f, since, wt, patch, total, not previous) for f in files if os.path.isfile(f)):
-        return None
-    return ("버그 축 리뷰가 diff 를 읽은 기록이 없다(%s 뒤의 세션 기록). code-review 를 수준을 적어 부르고(`medium`), "
-            "그 리뷰가 `.fade-review/bug.patch` 를 끝 줄까지 읽은 뒤 남긴다. 명세 리뷰어가 읽은 것, code-review 보다 앞의 "
-            "읽기, 잘리거나 파일을 줄인 git diff 는 치지 않는다" % ("앞 리뷰" if previous else "작업 시작"))
+    best, reviewed = None, False
+    for f in files:
+        seen = seen_in(f, since)
+        if seen is None:
+            continue
+        reviewed = True
+        missing = [n for n, text in wanted.items() if text not in seen]
+        if not missing:
+            return None
+        best = missing if best is None or len(missing) < len(best) else best
+    after = "앞 리뷰" if previous else "작업 시작"
+    if not reviewed:
+        return ("%s 뒤의 세션 기록에 code-review 가 돈 흔적이 없다. code-review 를 수준과 대상을 적어 부르고"
+                "(`medium .fade-review/bug.patch`), 그 리뷰가 bug.patch 를 끝까지 읽은 뒤 남긴다" % after)
+    return ("버그 축 리뷰가 bug.patch(%d줄)를 다 읽지 않았다. 출력에 보이지 않은 줄: %s. 잘린 출력(토큰 한도, head)은 "
+            "앞부분만 읽은 것이다. 보이지 않은 줄을 나눠 읽은 뒤 다시 남긴다. 명세 리뷰어가 읽은 것은 치지 않는다"
+            % (len(lines), spans(best)))
+
+
+def note(reason):
+    """막지 않되 판정하지 못한 사실과 이유를 에이전트와 사용자에게 알린다."""
+    text = "fade 리뷰 훅이 판정하지 못했다. 막지 않는다: " + reason
+    print(json.dumps({"systemMessage": text, "hookSpecificOutput": {"hookEventName": "PreToolUse",
+                                                                    "additionalContext": text}}, ensure_ascii=False))
 
 
 def main():
@@ -141,10 +156,17 @@ def main():
         if not is_review(seg):
             continue
         found = merge_gate.job_at(here)
-        if not found or job.under_temp(job.main_checkout(found[1])):
+        if not found:
             continue
         state, wt = found
-        problem = review_problem(state, wt, data.get("transcript_path"))
+        if job.under_temp(job.main_checkout(wt)):
+            note("레포가 OS 임시 폴더 아래라(써 보기, 테스트) 판정하지 않는다")
+            return
+        try:
+            problem = review_problem(state, wt, data.get("transcript_path"))
+        except Unjudged as e:
+            note(str(e))
+            return
         if not problem:
             continue
         print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
@@ -156,5 +178,5 @@ def main():
 if __name__ == "__main__":
     try:
         main()
-    except Exception as e:  # 훅이 죽으면 막지도 허용하지도 않는다
-        print("fade review_gate: %s" % e, file=sys.stderr)
+    except Exception as e:  # 훅이 죽으면 막지 않되, 판정하지 못했다고 알린다
+        note("훅이 오류로 끝났다(%s: %s)" % (type(e).__name__, e))
