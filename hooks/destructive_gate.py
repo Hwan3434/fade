@@ -8,16 +8,14 @@ fade 를 깐 모든 세션의 Bash 호출에 걸린다. job 기록과 상관없�
 """
 import json
 import os
-import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import merge_gate  # noqa: E402
 
 SAFE_DEVICES = {"/dev/null", "/dev/stdout", "/dev/stderr"}
-GIT_VALUE_OPTIONS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace"}
-PUSH_VALUE_OPTIONS = {"-o", "--push-option", "--repo", "--receive-pack", "--exec"}
-WRAPPERS = {"sudo", "env", "command", "exec", "nohup", "time", "!", "{", "if", "then", "elif", "else", "while", "until", "do"}
+GIT_VALUE_OPTIONS, PUSH_VALUE_OPTIONS, WRAPPERS = merge_gate.GIT_VALUE_OPTIONS, merge_gate.PUSH_VALUE_OPTIONS, merge_gate.WRAPPERS
+git_out = merge_gate.git_out
 
 
 def resolve(arg, cwd, home):
@@ -56,14 +54,6 @@ def rm_problem(args, cwd, home):
         return None  # 재귀가 없으면 rm 은 폴더를 지우지 않는다
     hits = [a for a in operands if wipes_home(resolve(a, cwd, home), home)]
     return "%s 의 재귀 삭제" % hits[0] if hits else None
-
-
-def git_out(cwd, *args):
-    try:
-        r = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, timeout=10)
-    except (OSError, subprocess.TimeoutExpired):
-        return ""
-    return r.stdout.strip() if r.returncode == 0 else ""
 
 
 def destination(refspec, cwd):

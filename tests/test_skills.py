@@ -259,7 +259,7 @@ class CommitTextTest(unittest.TestCase):
         self.assertIn("테스트만 담아 커밋", text)
         self.assertIn("구현 커밋에 함께 담는다", text)  # 커밋 검사가 실패하는 테스트를 받지 않는 레포
         # 실패 이유를 읽은 뒤에 커밋한다. 문법 오류로 실패한 테스트를 커밋하지 않게
-        self.assertLess(text.index("실패 출력이"), text.index("테스트만 담아 커밋"))
+        self.assertLess(text.index("실패 출력의 끝을 읽는다"), text.index("테스트만 담아 커밋"))
         self.assertIn("사소한 지적", text)  # 사소한 지적의 테스트는 따로 커밋하지 않는다
 
     def test_리뷰_단계는_막는_지적마다_커밋을_나눈다(self):

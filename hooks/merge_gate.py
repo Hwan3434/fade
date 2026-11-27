@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
-"""gh pr merge 직전에 job 기록, CI, PR 의 최신 커밋을 본다. 막으면 실수 기록에 한 줄 남긴다.
+"""base 로 들어가는 병합 직전에 job 기록을 본다. 막으면 실수 기록에 한 줄 남긴다.
 
+보는 병합은 셋이다. `gh pr merge`(CI 와 PR 의 최신 커밋도 본다), base 를 체크아웃한 곳에서 작업 브랜치를 합치는
+`git merge`, 작업 브랜치를 base 로 보내는 `git push <원격> <src>:<base>`. 작업 브랜치에서 base 를 합치는 `git merge` 는
+보지 않는다(충돌 풀기). 기록은 세션의 현재 폴더만이 아니라 명령이 가리키는 폴더(같은 명령 줄의 cd, git -C)와
+병합하는 브랜치가 체크아웃된 워크트리에서 찾는다. gh pr merge 는 PR 의 브랜치(headRefName)로 워크트리를 찾는다.
 job 기록이 있는 워크트리에서만 판정한다. 기록이 없는 곳이나 이 훅이 오류로 죽은 경우에는
 아무 판정도 내지 않고 Claude 의 평소 권한 흐름으로 넘긴다. 실수를 막는 난간이지 보안 경계가 아니다.
 """
@@ -57,10 +61,44 @@ def without_comments(command):
     return "".join(out)
 
 
+def without_ansi_c(command):
+    """따옴표 밖에서 시작하는 bash 의 $'...' 를 빈 따옴표로 바꾼다. shlex 가 못 읽는 꼴이라서다. 작은따옴표나
+    큰따옴표 안의 $' 와 주석은 그대로 둔다(주석 속 작은따옴표에 따옴표 상태가 흔들리지 않게 주석은 건너뛴다).
+    닫히지 않은 $' 는 그대로 둬 shlex 가 해석하지 못했다고 알리게 한다."""
+    out, quote, prev, i, n = [], None, "\n", 0, len(command)
+    while i < n:
+        c = command[i]
+        if quote is None and c == "#" and (prev.isspace() or prev in PUNCTUATION):
+            end = command.find("\n", i)
+            end = n if end < 0 else end
+            out.append(command[i:end])
+            prev, i = "#", end
+            continue
+        if quote is None and command.startswith("$'", i):
+            j = i + 2
+            while j < n and command[j] != "'":
+                j += 2 if command[j] == "\\" else 1
+            if j < n:
+                out.append("''")
+                prev, i = "'", j + 1
+                continue
+        if c == "\\" and quote != "'" and i + 1 < n:
+            out.append(command[i:i + 2])
+            prev, i = "\\", i + 2
+            continue
+        if c in "'\"" and quote in (None, c):
+            quote = None if quote else c
+        out.append(c)
+        prev, i = c, i + 1
+    return "".join(out)
+
+
 def segments(command):
     """명령 줄을 실제로 실행될 단순 명령 조각(토큰 목록)들로 나눈다. 앞에 붙은 환경 변수 지정은 뗀다.
-    인용된 글자, heredoc 본문, 주석은 명령으로 치지 않는다. 해석하지 못하면 ValueError."""
-    lex = shlex.shlex(without_comments(without_heredoc_bodies(command)), posix=True, punctuation_chars=PUNCTUATION)
+    인용된 글자, heredoc 본문, 주석은 명령으로 치지 않는다. 해석하지 못하면 ValueError.
+    shlex 가 못 읽는 bash 의 $'...' 는 빈 따옴표로 바꿔 읽는다. 인용된 글자라 명령으로 치지 않는 것은 같다."""
+    lex = shlex.shlex(without_comments(without_ansi_c(without_heredoc_bodies(command))), posix=True,
+                      punctuation_chars=PUNCTUATION)
     lex.whitespace_split = True
     lex.whitespace = " \t\r"  # 줄바꿈은 명령을 나누는 글자로 읽는다
     lex.commenters = ""
@@ -77,10 +115,127 @@ def segments(command):
     return found
 
 
-def merge_segments(command):
-    """명령 줄에서 실제로 실행될 `gh pr merge ...` 조각들의 인자를 돌려준다."""
-    return [seg[3:] for seg in segments(command)
-            if len(seg) >= 3 and os.path.basename(seg[0]) == "gh" and seg[1:3] == ["pr", "merge"]]
+GIT_VALUE_OPTIONS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace"}
+PUSH_VALUE_OPTIONS = {"-o", "--push-option", "--repo", "--receive-pack", "--exec"}
+MERGE_VALUE_OPTIONS = {"-m", "-F", "-s", "-X", "--strategy", "--strategy-option", "--file"}
+WRAPPERS = {"sudo", "env", "command", "exec", "nohup", "time", "!", "{", "if", "then", "elif", "else", "while", "until", "do"}
+
+
+def located(command, cwd):
+    """명령 줄의 단순 명령 조각마다 (그 조각이 도는 폴더, 토큰들)을 돌려준다. 같은 명령 줄의 cd 를 따라가고,
+    git 의 -C 는 그 조각의 폴더로 읽어 토큰에서 뗀다. 셸 예약어와 감싸는 명령은 뗀다."""
+    out = []
+    for seg in segments(command):
+        while seg and (seg[0] in WRAPPERS or ("=" in seg[0] and not seg[0].startswith("-"))):
+            seg = seg[1:]
+        if not seg:
+            continue
+        name = os.path.basename(seg[0])
+        if name == "cd":
+            target = seg[-1] if len(seg) > 1 else "~"
+            if target != "-":
+                cwd = os.path.normpath(os.path.join(cwd, os.path.expanduser(target)))
+            continue
+        here = cwd
+        if name == "git":
+            args, rest = [seg[0]], seg[1:]
+            while rest and rest[0].startswith("-"):
+                a = rest.pop(0)
+                if a in GIT_VALUE_OPTIONS and rest:
+                    value = rest.pop(0)
+                    if a == "-C":
+                        here = os.path.normpath(os.path.join(here, os.path.expanduser(value)))
+                    continue
+                args.append(a)
+            seg = args + rest
+        out.append((here, seg))
+    return out
+
+
+def git_out(cwd, *args):
+    try:
+        r = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    return r.stdout.strip() if r.returncode == 0 else ""
+
+
+def bases(cwd):
+    """base 로 칠 브랜치 이름들: main, master, 그 레포 origin 의 기본 브랜치."""
+    names = {"main", "master"}
+    default = git_out(cwd, "symbolic-ref", "--short", "refs/remotes/origin/HEAD")
+    if default.startswith("origin/"):
+        names.add(default[len("origin/"):])
+    return names
+
+
+def worktree_of(cwd, branch):
+    """cwd 의 레포에서 branch 가 체크아웃된 워크트리 경로. 없으면 None. 원격 추적 이름(origin/x)도 x 로 찾는다."""
+    if not branch or not os.path.isdir(cwd):
+        return None
+    listing = git_out(cwd, "worktree", "list", "--porcelain")
+    names = {branch[len(p):] for p in ("refs/heads/", "refs/remotes/origin/", "origin/") if branch.startswith(p)} | {branch}
+    path = None
+    for line in listing.splitlines():
+        if line.startswith("worktree "):
+            path = line[len("worktree "):]
+        elif line.startswith("branch refs/heads/") and line[len("branch refs/heads/"):] in names:
+            return path
+    return None
+
+
+def job_at(cwd, merged_too=False):
+    """cwd 의 워크트리에 지금 브랜치의 job 기록이 있으면 (기록, 워크트리), 아니면 None. 병합이 기록된 작업은
+    merged_too 일 때만 친다(승인 창 훅은 병합 뒤에도 사람이 없다)."""
+    if not cwd or not os.path.isdir(cwd) or not job.git_dir(cwd):
+        return None
+    state = job.load(cwd)
+    if state is None or (state["merged"] and not merged_too) or state.get("branch") != job.branch(cwd):
+        return None
+    return state, cwd
+
+
+def git_targets(here, seg):
+    """`git merge`·`git push` 조각이 base 로 들이는 작업 브랜치의 job (기록, 워크트리)들."""
+    if len(seg) < 2 or os.path.basename(seg[0]) != "git" or seg[1] not in ("merge", "pull", "push"):
+        return []
+    values = PUSH_VALUE_OPTIONS if seg[1] == "push" else MERGE_VALUE_OPTIONS
+    args, rest = [], seg[2:]
+    while rest:
+        a = rest.pop(0)
+        if a in values:
+            rest = rest[1:]
+        elif not a.startswith("-"):
+            args.append(a)
+    if seg[1] in ("merge", "pull"):
+        if job.branch(here) not in bases(here):
+            return []  # 작업 브랜치에서 base 를 합치는 것(충돌 풀기)은 보지 않는다
+        # pull 은 첫 인자가 원격이고 그 뒤가 합칠 브랜치다
+        found = [job_at(worktree_of(here, b)) for b in (args if seg[1] == "merge" else args[1:])]
+    else:
+        found = []
+        for spec in args[1:]:
+            src, _, dst = spec.lstrip("+").partition(":")
+            dst = dst[len("refs/heads/"):] if dst.startswith("refs/heads/") else dst
+            if dst and dst in bases(here):
+                found.append(job_at(here) if src in ("HEAD", "@", job.branch(here)) else job_at(worktree_of(here, src)))
+    return [f for f in found if f]
+
+
+def pr_branch(cwd, merge_args):
+    """`gh pr merge` 의 PR 이 올라온 브랜치. 읽지 못하면 빈 글."""
+    target, repo = pr_target(merge_args)
+    try:
+        r = subprocess.run(["gh", "pr", "view", *target, *repo, "--json", "headRefName", "-q", ".headRefName"],
+                           cwd=cwd, capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    return r.stdout.strip() if r.returncode == 0 else ""
+
+
+def gh_target(here, merge_args):
+    """`gh pr merge` 가 들이는 작업의 job (기록, 워크트리). 그 폴더의 기록이 먼저이고, 없으면 PR 의 브랜치로 워크트리를 찾는다."""
+    return job_at(here) or job_at(worktree_of(here, pr_branch(here, merge_args)))
 
 
 VALUE_FLAGS = {"-R", "--repo", "-t", "--subject", "-b", "--body", "-F", "--body-file",
@@ -132,23 +287,30 @@ def head_problem(cwd, merge_args):
             "맞춘 뒤 그 커밋에서 다시 검증하고 병합한다" % (job.short(remote), job.short(local)))
 
 
+def problems(command, cwd):
+    """명령 줄이 base 로 들이는 job 마다 빠진 것을 모은다. (기록, 워크트리, 빠진 것들) 의 목록."""
+    out = []
+    for here, seg in located(command, cwd):
+        if len(seg) >= 3 and os.path.basename(seg[0]) == "gh" and seg[1:3] == ["pr", "merge"]:
+            # cd 대상이 레포 밖이거나 펼쳐지지 않은 글자($WT)여서 못 찾으면 세션 폴더의 기록을 본다(예전 동작)
+            found = gh_target(here, seg[3:]) or (here != cwd and gh_target(cwd, seg[3:]))
+            if found:
+                state, wt = found
+                left = job.missing(state, wt) + [p for p in (ci_problem(wt, seg[3:]), head_problem(wt, seg[3:])) if p]
+                out.append((state, wt, left))
+        else:
+            out += [(state, wt, job.missing(state, wt)) for state, wt in git_targets(here, seg)]
+    return [o for o in out if o[2]]
+
+
 def main():
     data = json.load(sys.stdin)
     if data.get("tool_name") != "Bash":
         return
-    merges = merge_segments(data.get("tool_input", {}).get("command", ""))
-    if not merges:
+    found = problems(data.get("tool_input", {}).get("command", ""), data.get("cwd") or os.getcwd())
+    if not found:
         return
-    cwd = data.get("cwd") or os.getcwd()
-    state = job.load(cwd)
-    if state is None or state["merged"] or state.get("branch") != job.branch(cwd):
-        return
-    left = job.missing(state, cwd)
-    for problem in (ci_problem(cwd, merges[0]), head_problem(cwd, merges[0])):
-        if problem:
-            left.append(problem)
-    if not left:
-        return
+    state, cwd, left = found[0]
     reason = "fade job 의 병합 조건이 채워지지 않았다.\n" + "\n".join("- " + m for m in left) + \
              "\n채운 뒤 `job.py check` 로 빠진 것이 없는지 보고 다시 병합한다. 채울 수 없으면 병합하지 않고 보고한다."
     print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
