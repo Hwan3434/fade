@@ -233,12 +233,8 @@ def git_out(cwd, *args):
 
 
 def bases(cwd):
-    """base 로 칠 브랜치 이름들: main, master, 그 레포 origin 의 기본 브랜치."""
-    names = {"main", "master"}
-    default = git_out(cwd, "symbolic-ref", "--short", "refs/remotes/origin/HEAD")
-    if default.startswith("origin/"):
-        names.add(default[len("origin/"):])
-    return names
+    """base 로 칠 브랜치 이름들: main, master, 그 레포 origin 의 기본 브랜치. job.py 의 기록과 같은 판정을 쓴다."""
+    return job.base_names(cwd)
 
 
 def worktree_of(cwd, branch):

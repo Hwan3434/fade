@@ -352,6 +352,8 @@ class RewriteTest(Base):
     def test_실수_기록_폴더에_쓸_수_없어도_PR_을_남기고_그_사실을_알린다(self):
         path, env = self.own_log()
         job(self.cwd, "slip", "review", "k", "이번", env=env)
+        if hasattr(os, "geteuid") and os.geteuid() == 0:
+            self.skipTest("root 는 쓸 수 없는 폴더에도 쓴다")
         os.remove(path + ".lock")
         os.chmod(os.path.dirname(path), 0o500)
         self.addCleanup(os.chmod, os.path.dirname(path), 0o700)

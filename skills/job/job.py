@@ -395,7 +395,8 @@ def main_checkout(cwd):
 
 def skips_default(cwd):
     """임시 폴더의 레포(테스트, 써 보기)나 써 보기 세션(FADE_TRY_REPO)에서 FADE_MISTAKES 를 정하지 않았으면 기본 실수
-    기록에 손대지 않는다. 붙이기(add_mistake), 채우기(fill_pr), 고치기(mark)가 모두 이것을 본다."""
+    기록에 손대지 않는다. 붙이기(add_mistake)와 채우기(fill_pr)가 이것을 본다. mark 는 전역 기록을 고치는 명령이라
+    git 레포 안에서 부를 때만 임시 폴더를 본다."""
     return not os.environ.get("FADE_MISTAKES") and bool(os.environ.get("FADE_TRY_REPO") or under_temp(main_checkout(cwd)))
 
 
@@ -626,14 +627,16 @@ def show(state, cwd, full=False):
     done = state.get("human_done") or {}
     for n, h in enumerate(state["human"], 1):
         d = done.get(str(n))
-        lines.append("- 사람이 볼 것 %d: %s%s" % (n, h, " → 풀림(커밋 %s): %s" % (at(d), d["by"]) if d else ""))
+        state_ = "" if not d else (" → 풀림(커밋 %s): %s%s" % (at(d), d["by"], "" if holds(cwd, d, head(cwd)) else
+                                                             ". 그 뒤 커밋이 바뀌어 낡았다"))
+        lines.append("- 사람이 볼 것 %d: %s%s" % (n, h, state_))
         lines += file_lines(d["files"]) if d and full else []
     door = state.get("door")
     if door:
         lines.append("- 되돌릴 수 있는가: %s — %s" % ("한쪽 문" if door["kind"] == "one-way" else "양쪽 문", door["why"]))
     skipped = (state.get("review_files") or {}).get("excluded")
     if skipped:
-        lines.append("- 리뷰에서 뺀 파일(레포의 .gitattributes 표시): " + ", ".join(excluded_text(skipped)))
+        lines.append("- 리뷰에서 뺀 파일(base 의 .gitattributes 표시): " + ", ".join(excluded_text(skipped)))
     review = state.get("review")
     if review:
         lines.append("- 리뷰(%s%s): 남은 막는 지적 %d개%s%s" % (
@@ -667,14 +670,14 @@ def patch_file(header):
 
 def unreviewed(cwd, names, source):
     """레포가 .gitattributes 로 읽을 대상이 아니라고 표시한 파일: linguist-generated(GitHub 가 diff 에서 접는 생성 파일),
-    -diff 와 binary(git 이 글로 비교하지 않는 파일). 표시는 작업 트리의 .gitattributes 에서 읽는다.
-    fade 는 파일 이름이나 확장자 목록을 갖지 않는다. 표시가 없으면 빼지 않는다."""
+    -diff 와 binary(git 이 글로 비교하지 않는 파일). 표시는 source(base)의 .gitattributes 에서 읽는다.
+    fade 는 파일 이름이나 확장자 목록을 갖지 않는다. 표시가 없으면 빼지 않는다. 읽지 못하면 git 의 오류 글을 돌려준다."""
     if not names:
         return {}
     r = subprocess.run(["git", "check-attr", "-z", "--source=" + source, "--stdin", "linguist-generated", "diff", "binary"],
                        cwd=cwd, input="\0".join(sorted(names)) + "\0", capture_output=True, text=True)
     if r.returncode != 0:
-        return None
+        return r.stderr.strip() or "git check-attr 가 종료 코드 %d 로 끝났다" % r.returncode
     out, marked = r.stdout.split("\0"), {}
     for path, attr, value in zip(out[0::3], out[1::3], out[2::3]):
         mark = {("linguist-generated", "set"): "linguist-generated", ("linguist-generated", "true"): "linguist-generated",
@@ -740,8 +743,8 @@ def review_files(cwd, state, base):
     # 이 브랜치가 더한 표시는 병합된 뒤의 작업부터 듣는다. base 의 표시를 읽지 못하면(옛 git) 아무것도 빼지 않는다
     whole = changed(top, base + "...HEAD")
     skip = unreviewed(top, whole | changed(top, *spec_range) | bug_names, base)
-    unread_marks = skip is None
-    skip = skip or {}
+    unread_marks = skip if isinstance(skip, str) else ""
+    skip = {} if unread_marks else skip
     keep = ["--", ":/"] + [":(top,literal,exclude)" + p for p in skip]
     r = subprocess.run(["git", "diff", *spec_range, *keep], cwd=top, capture_output=True, text=True)
     bug = subprocess.run(["git", "diff", *bug_range, *keep], cwd=top, capture_output=True, text=True).stdout
@@ -777,8 +780,8 @@ def review_files(cwd, state, base):
         print("리뷰에서 뺀 파일(base 의 .gitattributes 표시) %d개: %s"
               % (len(skip), ", ".join(excluded_text(excluded))))
     if unread_marks:
-        print("base(%s)의 .gitattributes 표시를 읽지 못했다(git check-attr --source 는 git 2.40 부터). 아무 파일도 빼지 않았다"
-              % base)
+        print("base(%s)의 .gitattributes 표시를 읽지 못해 아무 파일도 빼지 않았다(git check-attr --source 는 git 2.40 부터): %s"
+              % (base, unread_marks))
     if any(os.path.basename(n) == ".gitattributes" for n in whole):
         print("이 브랜치가 .gitattributes 를 바꿨다. 리뷰에서 뺄 파일은 base 의 표시로만 정하니, 이 브랜치에서 더한 표시는 "
               "병합된 뒤의 작업부터 듣는다. 그 변경 자체는 bug.patch 에 든다")

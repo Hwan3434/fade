@@ -279,6 +279,7 @@ class RecordTest(Base):
         check = job(self.wt, "check").stdout
         self.assertIn("앱 화면", check)
         self.assertIn("낡", check)
+        self.assertIn("낡았다", job(self.wt, "show").stdout)  # show 도 풀린 것으로만 보이지 않는다
 
     def test_없는_번호와_빈_근거는_받지_않는다(self):
         self.start()
