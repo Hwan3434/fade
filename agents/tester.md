@@ -1,7 +1,6 @@
 ---
 name: tester
 description: "결과물을 사용자가 쓰는 방식 그대로 써 보고 보고만 하는 테스터. 고치지 않는다. 완료 기준의 경우마다 시나리오를 먼저 적고, 웹은 내장 브라우저 도구, iOS 는 시뮬레이터 도구, Android 는 adb, CLI 는 명령으로 써 본 뒤, 화면과 출력 파일의 경로와 시나리오별 기대값·실제값을 돌려준다. try 스킬과 job 의 직접 써 보기 단계가 부른다."
-model: sonnet
 disallowedTools: Edit, Write, NotebookEdit
 ---
 

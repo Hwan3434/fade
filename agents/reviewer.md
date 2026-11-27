@@ -2,7 +2,6 @@
 name: reviewer
 description: "job 의 명세 축 리뷰어. 계획서, `job.py show` 출력, diff(첫 리뷰는 base 와의 전체, 다시 하는 리뷰는 명세 리뷰어가 마지막으로 본 커밋 뒤에 고친 부분)를 담은 파일 경로를 받아, 구현자의 보고를 믿지 않고 diff 와 하나씩 대조해 명세 충족을 먼저, 테스트 품질을 다음에 본다. 지적마다 막는 지적인지 사소한 지적인지를 적고 판단 보류 목록을 낸다. job 의 코드 리뷰 단계가 부른다."
 tools: Read, Grep, Glob
-model: opus
 ---
 
 # reviewer — 명세 축 리뷰
