@@ -88,7 +88,7 @@ class DestructiveGateTest(unittest.TestCase):
         self.assertBlocked("cd ~ && rm -rf *")
         self.assertBlocked("cd && rm -rf .")
         self.assertBlocked("cd /tmp; cd ~; rm -rf *")
-        self.assertAllowed("cd /tmp && rm -rf *")
+        self.assertAllowed("cd " + self.cwd + " && rm -rf *")  # /tmp 는 CI 에서 가짜 홈의 위 폴더라 쓰지 않는다
         self.assertAllowed("cd ~/projects && rm -rf build")
 
     def test_끝_이름의_글롭은_그_폴더_안_전부로_본다(self):
