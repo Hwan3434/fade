@@ -9,6 +9,8 @@ stop 과 slip, 그리고 병합 훅과 승인 창 훅이 막을 때 한 줄씩 �
 
   job.py start   <제목> [--pr-only] [--unattended]
                                          작업을 시작한다. PR 까지만이면 --pr-only, 계획서가 「사용자: 없음」이면 --unattended
+                                         start, review, show 의 옵션은 다른 인자의 앞뒤 어디에 써도 읽는다. 모르는 옵션(-- 로 시작하고
+                                         띄어쓰기가 없는 인자)은 evidence, log, tried, drop 에서도 받지 않는다
   job.py scope   merge|pr                범위를 바꾼다 (사용자가 범위를 바꿨을 때)
   job.py red     <테스트 명령>           명령을 돌려 실패할 때만 기록한다 (구현 전)
   job.py green                           red 의 명령을 다시 돌려 통과할 때만 기록한다 (구현 후)
@@ -27,10 +29,12 @@ stop 과 slip, 그리고 병합 훅과 승인 창 훅이 막을 때 한 줄씩 �
   job.py human   <사람이 볼 것>           사람만 판정할 수 있는 것이 남았을 때. 직접 써 보기를 대신하고, 병합을 막는다
   job.py review-files <base>             첫 줄에 base 와의 diff 줄 수(더한 줄 + 뺀 줄)와 돌릴 리뷰 축을 알린다. %d줄 미만이면
                                          버그 축만, 이상이면 명세 리뷰어도 띄운다. 명세 축 리뷰어에게 줄 show 출력과 diff 를
-                                         워크트리 안 .fade-review/ (git 이 무시하는 폴더)에 쓴다. 앞 리뷰에서 명세 축이 돌았으면
-                                         그 커밋 뒤에 고친 부분만, 아니면 base 와의 전체를 쓴다. 계획서 원문은 부르는 쪽이 plan.md 로 쓴다
-  job.py review  <남은 막는 지적 수> [<요약>]
+                                         워크트리 안 .fade-review/ (git 이 무시하는 폴더)에 쓴다. 명세 리뷰어가 본 커밋이
+                                         있으면 그 뒤에 고친 부분만, 없으면 base 와의 전체를 쓴다. 계획서 원문은 부르는 쪽이 plan.md 로 쓴다
+  job.py review  <남은 막는 지적 수> [<요약>] [--minor]
                                          코드 리뷰 결과. 지금 커밋에서 남은 막는 지적이 0 이어야 병합한다
+                                         --minor 는 막는 지적이 0 이 된 뒤 사소한 지적을 한 커밋으로 고치고, 그 커밋의 diff 만
+                                         버그 축으로 본 리뷰다. 앞 리뷰가 막는 지적 0 이고 그 뒤의 커밋이 하나일 때만 받는다
   job.py door    one-way|two-way <이유와 영향 범위>
                                          되돌릴 수 있는가. 기록이 없거나 one-way(한쪽 문)면 병합을 막는다
   job.py stop    <이유>                  해결하지 못했거나 사용자 결정이 필요해 멈춘다. 병합을 막고 실수 기록에 남긴다
@@ -46,11 +50,16 @@ stop 과 slip, 그리고 병합 훅과 승인 창 훅이 막을 때 한 줄씩 �
 """
 import json
 import os
+import re
 import subprocess
 import sys
 import time
 
 TAIL = 40
+OPTIONS = {"start": ("--pr-only", "--unattended"), "review": ("--minor",), "show": ("--full",)}
+USAGE = {"start": "job.py start <제목> [--pr-only] [--unattended]",
+         "review": "job.py review <남은 막는 지적 수> [<요약>] [--minor]", "show": "job.py show [--full]"}
+OPTION = re.compile(r"--\S+")  # 띄어쓰기가 든 글(「--unattended 를 고친다」)은 옵션이 아니다
 SPEC_REVIEW_LINES = 200  # base 와의 diff 가 이 줄 수 이상일 때만 명세 리뷰어를 띄운다
 __doc__ = __doc__ % SPEC_REVIEW_LINES
 
@@ -132,12 +141,24 @@ def is_ancestor(cwd, old, new):
 
 def split_paths(args):
     """인자에서 --paths 뒤의 경로들을 떼어 (앞 인자, 경로)로 돌려준다. --paths 가 없으면 경로는 None."""
-    if "--paths" not in args:
+    i = args.index("--paths") if "--paths" in args else len(args)
+    unknown = [a for a in args[:i] if OPTION.fullmatch(a)]
+    if unknown:
+        sys.exit("모르는 옵션: %s\n여기서 받는 옵션은 끝에 붙이는 --paths <경로>... 뿐이다" % ", ".join(unknown))
+    if i == len(args):
         return args, None
-    i = args.index("--paths")
     if not i:
         sys.exit(__doc__)
     return args[:i], args[i + 1:]
+
+
+def split_options(cmd, args):
+    """옵션을 위치와 상관없이 떼어 (나머지 인자, 옵션들)로 돌려준다. 그 명령이 모르는 옵션이면 사용법을 내며 끝낸다."""
+    options = [a for a in args if OPTION.fullmatch(a)]
+    unknown = [a for a in options if a not in OPTIONS[cmd]]
+    if unknown:
+        sys.exit("모르는 옵션: %s\n%s" % (", ".join(unknown), USAGE[cmd]))
+    return [a for a in args if a not in options], options
 
 
 def repo_paths(cwd, paths):
@@ -356,7 +377,9 @@ def show(state, cwd, full=False):
         lines.append("- 되돌릴 수 있는가: %s — %s" % ("한쪽 문" if door["kind"] == "one-way" else "양쪽 문", door["why"]))
     review = state.get("review")
     if review:
-        lines.append("- 리뷰(%s): 남은 막는 지적 %d개%s" % (at(review), review["left"], " — " + review["note"] if review["note"] else ""))
+        lines.append("- 리뷰(%s%s): 남은 막는 지적 %d개%s" % (
+            at(review), ", 사소한 지적을 모아 고친 커밋의 버그 축" if review.get("minor") else "", review["left"],
+            " — " + review["note"] if review["note"] else ""))
     if state["pr"]:
         lines.append("- PR: " + state["pr"])
     if state["merged"]:
@@ -379,8 +402,9 @@ def review_files(cwd, state, base):
                       for i in (0, 1))
     total, now, review = added + removed, head(cwd), state.get("review") or {}
     spec = total >= SPEC_REVIEW_LINES
-    # 고친 부분만 주는 것은 명세 리뷰어가 앞 리뷰의 커밋까지를 실제로 본 경우뿐이다
-    since = review["head"] if review.get("spec") and is_ancestor(cwd, review["head"], now) else None
+    # 고친 부분만 주는 것은 명세 리뷰어가 실제로 본 커밋이 남아 있는 경우뿐이다
+    since = review.get("spec_head")
+    since = since if since and is_ancestor(cwd, since, now) else None
     r = subprocess.run(["git", "diff", since, "HEAD"] if since else ["git", "diff", base + "...HEAD"], cwd=cwd,
                        capture_output=True, text=True)
     folder = os.path.join(top_dir(cwd), ".fade-review")
@@ -391,8 +415,26 @@ def review_files(cwd, state, base):
     state["review_files"] = {"head": now, "dirty": dirty(cwd), "spec": spec}
     print("base 와의 diff: 더한 줄 %d + 뺀 줄 %d = %d줄. " % (added, removed, total)
           + ("%d줄 이상이라 버그 축과 함께 명세 리뷰어를 띄운다" if spec else "%d줄 미만이라 버그 축만 돌린다") % SPEC_REVIEW_LINES)
-    print("diff.patch: " + ("고친 부분만(앞 리뷰 %s 뒤의 diff)" % short(since) if since else "전체(base 와의 diff)"))
+    print("diff.patch: " + ("고친 부분만(명세 리뷰어가 본 %s 뒤의 diff)" % short(since) if since else "전체(base 와의 diff)"))
     return folder
+
+
+def minor_spec_head(cwd, prev, now):
+    """review --minor 를 받을 수 있으면 명세 리뷰어가 마지막으로 본 커밋(없으면 None)을 돌려주고, 아니면 이유를 내며 끝낸다.
+    명세 리뷰어는 사소한 지적을 고친 커밋을 보지 않으니 앞 리뷰의 값을 그대로 넘긴다."""
+    back = "원래 흐름대로 review-files 부터 다시 리뷰한다"
+    if not prev or prev["left"] or prev.get("dirty"):
+        sys.exit("--minor 는 앞 리뷰에서 커밋 전 변경 없이 남은 막는 지적이 0 이 된 뒤에만 쓴다. " + back)
+    if prev.get("minor"):
+        sys.exit("앞 리뷰가 이미 사소한 지적을 모아 고친 커밋의 리뷰다. 사소한 지적은 한 번에 모아 고친다. " + back)
+    if not is_ancestor(cwd, prev["head"], now):
+        sys.exit("앞 리뷰의 커밋(%s)이 사라졌다. %s" % (short(prev["head"]), back))
+    count = subprocess.run(["git", "rev-list", "--count", prev["head"] + ".." + now], cwd=cwd, capture_output=True,
+                           text=True).stdout.strip()
+    if count != "1":
+        sys.exit("앞 리뷰(%s) 뒤의 커밋이 하나가 아니다(%s개). 사소한 지적은 한 커밋으로 고친다. %s"
+                 % (short(prev["head"]), count, back))
+    return prev.get("spec_head")
 
 
 def need_files(paths):
@@ -414,13 +456,16 @@ def main(argv):
     if not git_dir(cwd):
         sys.exit("git 레포 안에서 돌린다")
     state = load(cwd)
+    options = []
+    if cmd in OPTIONS:
+        args, options = split_options(cmd, args)
     if cmd == "start":
         if state and not state["merged"] and state.get("branch") == branch(cwd):
             sys.exit("이 브랜치에는 이미 시작한 작업이 있다: " + state["title"])
-        if not args:
-            sys.exit("작업 제목이 없다")
-        state = {"title": args[0], "scope": "pr" if "--pr-only" in args else "merge", "started": time.time(),
-                 "branch": branch(cwd), "unattended": "--unattended" in args,
+        if len(args) != 1 or not args[0].strip():
+            sys.exit("작업 제목은 하나다\n" + USAGE["start"])
+        state = {"title": args[0], "scope": "pr" if "--pr-only" in options else "merge", "started": time.time(),
+                 "branch": branch(cwd), "unattended": "--unattended" in options,
                  "red": None, "green": None, "no_test": None, "evidence": [], "tried": [], "try_na": None,
                  "human": [], "review": None, "door": None, "stopped": None, "pr": None, "merged": None}
         save(cwd, state)
@@ -431,7 +476,7 @@ def main(argv):
     need = {"scope": 1, "red": 1, "no-test": 1, "evidence": 2, "log": 2, "drop": 1, "tried": 1, "try-na": 1, "human": 1,
             "review": 1, "review-files": 1, "door": 2, "stop": 1, "slip": 2, "pr": 1, "merged": 1}
     if len(args) < need.get(cmd, 0):
-        sys.exit(__doc__)
+        sys.exit(USAGE.get(cmd, __doc__))
     if cmd == "scope":
         if args[0] not in ("merge", "pr"):
             sys.exit("범위는 merge 나 pr 이다")
@@ -458,6 +503,8 @@ def main(argv):
         put(state["evidence"], {"criterion": args[0], "files": need_files(args[1:]), "paths": repo_paths(cwd, paths),
                                 **where(cwd)}, ("criterion", "files"))
     elif cmd == "drop":
+        if len(args) != 1:
+            sys.exit("job.py drop <완료 기준> | --tried")
         if args[0] == "--tried":
             state["tried"] = []
         else:
@@ -491,10 +538,16 @@ def main(argv):
     elif cmd == "review":
         if not args[0].isdigit():
             sys.exit("남은 막는 지적 수는 0 이상의 정수다")
-        made = state.get("review_files") or {}
-        # 명세 리뷰어가 이 커밋까지 봤는가: 명세 축을 돌릴 크기였고, 리뷰 입력을 만든 뒤 커밋도 작업 트리도 바뀌지 않았다
-        spec = bool(made.get("spec")) and made.get("head") == head(cwd) and not made.get("dirty") and not dirty(cwd)
-        state["review"] = {"left": int(args[0]), "note": " ".join(args[1:2]), "spec": spec, **where(cwd)}
+        made, minor, now = state.get("review_files") or {}, "--minor" in options, head(cwd)
+        if minor:
+            spec_head = minor_spec_head(cwd, state.get("review"), now)
+        else:
+            # 명세 리뷰어가 이 커밋까지 봤는가: 명세 축을 돌릴 크기였고, 리뷰 입력을 만든 뒤 커밋도 작업 트리도 바뀌지 않았다
+            seen = bool(made.get("spec")) and made.get("head") == now and not made.get("dirty") and not dirty(cwd)
+            spec_head = now if seen else None
+        # spec_head 는 명세 리뷰어가 마지막으로 본 커밋이다. 다음 review-files 가 그 뒤의 diff 만 준다
+        state["review"] = {"left": int(args[0]), "note": " ".join(args[1:2]), "spec_head": spec_head, "minor": minor,
+                           **where(cwd)}
     elif cmd == "door":
         if args[0] not in ("one-way", "two-way") or not args[1].strip():
             sys.exit("job.py door one-way|two-way \"<이유와 영향 범위>\"")
@@ -525,7 +578,7 @@ def main(argv):
         sys.exit(__doc__)
     if cmd != "show":
         save(cwd, state)
-    print(show(state, cwd, full="--full" in args))
+    print(show(state, cwd, full="--full" in options))
 
 
 if __name__ == "__main__":

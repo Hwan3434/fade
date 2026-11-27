@@ -60,6 +60,19 @@ class MergeGateTest(unittest.TestCase):
         self.complete()
         self.assertIsNone(self.gate("git push origin x && gh pr merge 3 --merge"))
 
+    def test_사소한_지적을_모아_고친_커밋의_리뷰도_병합_조건의_리뷰로_친다(self):
+        commit_and_switch(self.cwd, "feat/x")  # 앞 리뷰를 남길 커밋이 있어야 한다
+        self.complete()
+        commit_file(self.cwd, "nit.txt", "사소한 수정\n")
+        shot = os.path.join(self.cwd, "s.png")
+        job(self.cwd, "green")
+        job(self.cwd, "evidence", "기준", shot)
+        job(self.cwd, "tried", "써 봄", shot)
+        out = self.gate("gh pr merge 3 --squash")
+        self.assertIn("리뷰: 마지막 커밋", out["permissionDecisionReason"])
+        self.assertEqual(job(self.cwd, "review", "0", "사소한 지적 둘을 고침", "--minor").returncode, 0)
+        self.assertIsNone(self.gate("gh pr merge 3 --squash"))
+
     def test_CI_가_돌고_있거나_실패하면_막는다(self):
         self.complete()
         self.assertEqual(self.gate("gh pr merge 3", ci_exit=8)["permissionDecision"], "deny")
