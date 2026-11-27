@@ -329,7 +329,15 @@ class RepoWayTest(unittest.TestCase):
         unattended = section(self.text, "사용자 없음일 때")
         self.assertIn("레포의 승인 규칙", unattended)
         self.assertIn("레포가 이긴다", unattended)
-        self.assertIn("job.py stop", unattended)
+        # 승인 규칙으로 멈추는 것이 「멈추는 때는 아래뿐이다」의 목록 안에 있어야 두 줄이 어긋나지 않는다
+        lines = unattended.splitlines()
+        start = next(i for i, l in enumerate(lines) if "멈추는 때는 아래뿐이다" in l)
+        cases = []
+        for line in lines[start + 1:]:
+            if not line.startswith("  - "):
+                break
+            cases.append(line)
+        self.assertTrue(any("승인 규칙" in c for c in cases), cases)
 
 
 if __name__ == "__main__":

@@ -221,6 +221,46 @@ class PrFillTest(Base):
         self.assertEqual(mistakes(path)[0]["pr"], "https://github.com/o/r/pull/7")
 
 
+class RewriteTest(Base):
+    """실수 기록을 다시 쓰는 명령(pr, mark)은 줄바꿈 글자로만 줄을 나눈다. 기록이 이상해도 pr 은 PR 을 작업 기록에 남긴다."""
+
+    def test_줄_구분이_아닌_유니코드_줄바꿈_글자에서_줄을_끊지_않는다(self):
+        path, env = self.own_log()
+        for what in ("앞\u2028뒤", "가\u2029나\x85다"):
+            self.assertEqual(job(self.cwd, "slip", "review", "k", what, env=env).returncode, 0)
+        job(self.cwd, "slip", "ci", "k", "셋째", env=env)
+        self.assertEqual(job(self.cwd, "pr", "https://github.com/o/r/pull/7", env=env).returncode, 0)
+        self.assertEqual([(m["what"], m["pr"]) for m in mistakes(path)],
+                         [(w, "https://github.com/o/r/pull/7") for w in ("앞\u2028뒤", "가\u2029나\x85다", "셋째")])
+        r = job(self.cwd, "mark", "3", "handled", "x", env=env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual([m["handled"] for m in mistakes(path)], ["", "", "x"])
+
+    def pr_recorded(self, env):
+        r = job(self.cwd, "pr", "https://github.com/o/r/pull/7", env=env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("PR 을 기록했다", r.stdout)
+        self.assertIn("https://github.com/o/r/pull/7", job(self.cwd, "show", env=env).stdout)
+        return r
+
+    def test_실수_기록에_객체가_아닌_줄이나_글자가_아닌_time_이_있어도_PR_을_남긴다(self):
+        path, env = self.own_log()
+        job(self.cwd, "slip", "review", "k", "이번", env=env)
+        with open(path, "a", encoding="utf-8") as f:
+            f.write("[1, 2]\n" + json.dumps({"time": 5, "repo": "/x", "branch": "feat/x", "pr": ""}) + "\n")
+        self.pr_recorded(env)
+        self.assertEqual(mistakes(path)[0]["pr"], "https://github.com/o/r/pull/7")
+
+    def test_실수_기록_폴더에_쓸_수_없어도_PR_을_남기고_그_사실을_알린다(self):
+        path, env = self.own_log()
+        job(self.cwd, "slip", "review", "k", "이번", env=env)
+        os.remove(path + ".lock")
+        os.chmod(os.path.dirname(path), 0o500)
+        self.addCleanup(os.chmod, os.path.dirname(path), 0o700)
+        r = self.pr_recorded(env)
+        self.assertIn("실수 기록", r.stdout)
+
+
 class LockTest(Base):
     """실수 기록은 여러 세션이 함께 쓴다. 다시 쓰는 명령(pr, mark)은 붙이는 쪽과 같은 잠금을 잡아 그 사이 붙은 줄을 잃지 않는다."""
 
