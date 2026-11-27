@@ -344,15 +344,16 @@ class ReviewFilesTest(ReviewBase):
         self.assertNotIn("- 리뷰(", job(self.cwd, "show").stdout)  # 기록되지 않았다
         r = job(self.cwd, "review", "0", "글만 바꾼 한 파일이라 버그 축만")
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("— 글만 바꾼 한 파일이라 버그 축만", r.stdout)
-        self.assertNotIn("명세 리뷰어도 봄", r.stdout)
+        out = job(self.cwd, "show").stdout
+        self.assertIn("— 글만 바꾼 한 파일이라 버그 축만", out)
+        self.assertNotIn("명세 리뷰어도 봄", out)
 
     def test_명세_리뷰어가_본_리뷰는_show_에_나온다(self):
         commit_file(self.cwd, "src/big.py", lines(20))
         self.review_files()
         r = job(self.cwd, "review", "0", "--spec")
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("명세 리뷰어도 봄", r.stdout)
+        self.assertIn("명세 리뷰어도 봄", job(self.cwd, "show").stdout)
 
     def test_명세_리뷰어를_띄우지_않은_리뷰_뒤에는_명세_리뷰어가_마지막으로_본_뒤의_diff_를_준다(self):
         commit_file(self.cwd, "src/big.py", lines(20))
@@ -443,10 +444,6 @@ class ShowTest(Base):
         self.assertLess(len(short), len(full))
         self.assertEqual(len([x for x in short if x.startswith("  - ")]), 3)  # 기준 둘과 써 보기 하나
 
-    def test_기록하는_명령은_짧은_출력을_낸다(self):
-        r = job(self.cwd, "log", "기준 1", "echo 경우=A")
-        self.assertNotIn(".log", r.stdout.split("상태:")[1])
-
 
 class RepoTest(unittest.TestCase):
     def test_파이썬_캐시_폴더는_git_이_무시한다(self):
@@ -480,8 +477,9 @@ class MinorReviewTest(ReviewBase):
         r = job(self.cwd, "review", "0", "사소한 지적 둘을 고침", "--minor")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertNotIn("리뷰:", self.check())
-        self.assertIn("사소한 지적을 모아 고친 커밋", r.stdout)
-        self.assertIn("— 사소한 지적 둘을 고침", r.stdout)
+        out = job(self.cwd, "show").stdout
+        self.assertIn("사소한 지적을 모아 고친 커밋", out)
+        self.assertIn("— 사소한 지적 둘을 고침", out)
         self.assertEqual(self.review()["note"], "사소한 지적 둘을 고침")
 
     def test_minor_를_수_앞에_써도_옵션으로_읽는다(self):
@@ -490,7 +488,7 @@ class MinorReviewTest(ReviewBase):
         r = job(self.cwd, "review", "--minor", "0", "요약")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual((self.review()["left"], self.review()["note"]), (0, "요약"))
-        self.assertIn("사소한 지적을 모아 고친 커밋", r.stdout)
+        self.assertIn("사소한 지적을 모아 고친 커밋", job(self.cwd, "show").stdout)
 
     def test_그_커밋에서_막는_지적이_나오면_원래_흐름으로_돌아가_명세_리뷰어가_본_뒤의_diff_를_준다(self):
         self.spec_reviewed()

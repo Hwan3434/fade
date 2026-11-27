@@ -197,8 +197,9 @@ class JobTest(unittest.TestCase):
         """start 를 돌려 (작업 줄의 제목, 사람 없음인가, PR 까지인가)를 돌려준다."""
         r = job(self.cwd, "start", *args)
         self.assertEqual(r.returncode, 0, r.stderr)
-        return ([line[len("- 작업: "):] for line in r.stdout.splitlines() if line.startswith("- 작업: ")][0],
-                "- 사람 없음" in r.stdout, "- 범위: PR 까지" in r.stdout)
+        out = job(self.cwd, "show").stdout
+        return ([line[len("- 작업: "):] for line in out.splitlines() if line.startswith("- 작업: ")][0],
+                "- 사람 없음" in out, "- 범위: PR 까지" in out)
 
     def test_start_옵션을_제목_뒤에_써도_읽는다(self):
         self.assertEqual(self.started("제목", "--unattended", "--pr-only"), ("제목", True, True))
@@ -237,7 +238,7 @@ class JobTest(unittest.TestCase):
             r = job(self.cwd, *args)
             self.assertNotEqual(r.returncode, 0, args)
             self.assertIn("모르는 옵션: --path", r.stderr)
-        out = job(self.cwd, "show").stdout
+        out = job(self.cwd, "check").stdout
         self.assertIn("증거: 완료 기준에 붙인 로그나 스크린샷이 없다", out)
         self.assertIn("직접 써 보기: 기록이 없다", out)
 
@@ -291,16 +292,17 @@ class JobTest(unittest.TestCase):
     def test_대시_두_개_뒤의_인자는_옵션이_아니라_값이다(self):
         r = job(self.cwd, "start", "--unattended", "--", "--pr-only")
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("- 작업: --pr-only", r.stdout)
-        self.assertIn("- 범위: 병합까지", r.stdout)  # 값으로 받은 --pr-only 는 범위를 바꾸지 않는다
-        self.assertIn("- 사람 없음", r.stdout)  # -- 앞의 옵션은 그대로 읽는다
+        out = job(self.cwd, "show").stdout
+        self.assertIn("- 작업: --pr-only", out)
+        self.assertIn("- 범위: 병합까지", out)  # 값으로 받은 --pr-only 는 범위를 바꾸지 않는다
+        self.assertIn("- 사람 없음", out)  # -- 앞의 옵션은 그대로 읽는다
         r = job(self.cwd, "review", "0", "--", "--bogus")
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("남은 막는 지적 0개 — --bogus", r.stdout)
+        self.assertIn("남은 막는 지적 0개 — --bogus", job(self.cwd, "show").stdout)
         before = len(mistakes())
         r = job(self.cwd, "stop", "--", "--unattended")
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("상태: 멈춤(--unattended)", r.stdout)
+        self.assertIn("상태: 멈춤(--unattended)", job(self.cwd, "show").stdout)
         self.assertEqual(mistakes()[before]["what"], "--unattended")
 
     def state_bytes(self):
