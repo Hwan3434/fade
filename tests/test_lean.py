@@ -502,3 +502,16 @@ class MinorReviewTest(ReviewFilesTest):
         r = job(self.cwd, "review", "0", "--minor")
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("review-files", r.stderr)
+
+    def test_사소한_지적을_고친_커밋의_리뷰_뒤에_또_minor_를_받지_않는다(self):
+        self.spec_reviewed()
+        commit_file(self.cwd, "src/nit.py", "사소한 수정\n")
+        self.assertEqual(job(self.cwd, "review", "0", "--minor").returncode, 0)
+        commit_file(self.cwd, "src/nit2.py", "사소한 수정 둘\n")
+        r = job(self.cwd, "review", "0", "--minor")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("한 번에", r.stderr)
+        _, diff = self.review_files()  # 원래 흐름으로 가면 명세 리뷰어가 보지 못한 두 커밋을 함께 받는다
+        self.assertIn("+사소한 수정\n", diff)
+        self.assertIn("+사소한 수정 둘", diff)
+        self.assertNotIn("+줄 0", diff)

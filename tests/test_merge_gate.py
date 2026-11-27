@@ -61,6 +61,7 @@ class MergeGateTest(unittest.TestCase):
         self.assertIsNone(self.gate("git push origin x && gh pr merge 3 --merge"))
 
     def test_사소한_지적을_모아_고친_커밋의_리뷰도_병합_조건의_리뷰로_친다(self):
+        commit_and_switch(self.cwd, "feat/x")  # 앞 리뷰를 남길 커밋이 있어야 한다
         self.complete()
         commit_file(self.cwd, "nit.txt", "사소한 수정\n")
         shot = os.path.join(self.cwd, "s.png")
