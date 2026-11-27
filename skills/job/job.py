@@ -2,7 +2,8 @@
 """job 의 단계 기록. 병합 직전에 fade 훅(hooks/merge_gate.py)이 이 기록을 본다.
 
 플러그인의 bin/job.py 가 이 파일을 부르고, Claude Code 가 bin/ 을 Bash 도구의 PATH 에 두니 경로 없이 `job.py <명령>` 으로 부른다.
-기록 명령은 무엇을 기록했는지 한두 줄만 찍는다. 기록 전체는 show, 병합 전에 빠진 것은 check 에서만 나온다.
+기록 명령은 무엇을 기록했는지 한두 줄만 찍는다(red 는 실패 출력의 끝을, log 는 실패했을 때 출력의 끝을 더 붙인다).
+기록 전체는 show, 병합 전에 빠진 것은 check 에서만 나온다.
 답을 받지 못한 질문이 있으면 기록 명령 뒤에도 그 사실을 한 줄 덧붙인다.
 
 기록은 작업 중인 워크트리의 git 폴더 안 fade-job.json 한 파일이다. 커밋되지 않고 워크트리와 함께 사라진다.
@@ -155,14 +156,17 @@ def tail_of(text):
 def pending(cwd):
     """커밋 전 변경이 있거나 추적하지 않는 파일(레포 기준 경로)과 그 내용의 해시(지워졌으면 빈 글)."""
     tracked = subprocess.run(["git", "diff", "--name-only", "HEAD"], cwd=top_dir(cwd), capture_output=True, text=True).stdout
-    return {p: content(cwd, p) for p in sorted(set(tracked.split("\n") + untracked(cwd)) - {""})}
+    return contents(cwd, sorted(set(tracked.split("\n") + untracked(cwd)) - {""}))
 
 
-def content(cwd, rel):
-    path = os.path.join(top_dir(cwd), rel)
-    if not os.path.isfile(path):
-        return ""
-    return subprocess.run(["git", "hash-object", "--", rel], cwd=top_dir(cwd), capture_output=True, text=True).stdout.strip()
+def contents(cwd, rels):
+    """파일마다 내용의 해시. 파일이 많아도 git 을 한 번만 부른다. 없는 파일은 빈 글."""
+    top = top_dir(cwd)
+    there = [r for r in rels if os.path.isfile(os.path.join(top, r))]
+    hashes = subprocess.run(["git", "hash-object", "--stdin-paths"], cwd=top, input="\n".join(there), capture_output=True,
+                            text=True).stdout.split() if there else []
+    found = dict(zip(there, hashes))
+    return {r: found.get(r, "") for r in rels}
 
 
 def untracked(cwd):
@@ -178,7 +182,8 @@ def changed_since(cwd, red):
     before = red.get("pending") or {}
     tracked = subprocess.run(["git", "diff", "--name-only", red["head"]], cwd=top_dir(cwd), capture_output=True,
                              text=True).stdout.split("\n")
-    return [p for p in sorted(set(tracked + untracked(cwd)) - {""}) if p not in before or content(cwd, p) != before[p]]
+    now = contents(cwd, sorted(set(tracked + untracked(cwd)) - {""}))
+    return [p for p in now if p not in before or now[p] != before[p]]
 
 
 def fenced(text):
@@ -691,6 +696,8 @@ def main(argv):
         state["scope"] = args[0]
         said = "범위를 바꿨다: " + ("PR 까지" if args[0] == "pr" else "병합까지")
     elif cmd == "red":
+        if len(args) != 1:  # 따옴표 없이 친 명령의 뒷말이 말없이 버려지지 않게 한다
+            sys.exit("테스트 명령은 따옴표로 묶어 하나로 준다: job.py red \"%s\"" % " ".join(args))
         code, out = run(cwd, args[0])
         if code == 0:
             sys.exit("테스트가 실패하지 않는다. 이번 변경을 판정하지 못하는 테스트다. 테스트를 고친다\n" + tail_of(out))

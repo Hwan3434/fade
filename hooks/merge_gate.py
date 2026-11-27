@@ -163,9 +163,9 @@ def job_at(cwd, merged_too=False):
 
 def git_targets(here, seg):
     """`git merge`·`git push` 조각이 base 로 들이는 작업 브랜치의 job (기록, 워크트리)들."""
-    if len(seg) < 2 or os.path.basename(seg[0]) != "git" or seg[1] not in ("merge", "push"):
+    if len(seg) < 2 or os.path.basename(seg[0]) != "git" or seg[1] not in ("merge", "pull", "push"):
         return []
-    values = MERGE_VALUE_OPTIONS if seg[1] == "merge" else PUSH_VALUE_OPTIONS
+    values = PUSH_VALUE_OPTIONS if seg[1] == "push" else MERGE_VALUE_OPTIONS
     args, rest = [], seg[2:]
     while rest:
         a = rest.pop(0)
@@ -173,10 +173,11 @@ def git_targets(here, seg):
             rest = rest[1:]
         elif not a.startswith("-"):
             args.append(a)
-    if seg[1] == "merge":
+    if seg[1] in ("merge", "pull"):
         if job.branch(here) not in bases(here):
             return []  # 작업 브랜치에서 base 를 합치는 것(충돌 풀기)은 보지 않는다
-        found = [job_at(worktree_of(here, b)) for b in args]
+        # pull 은 첫 인자가 원격이고 그 뒤가 합칠 브랜치다
+        found = [job_at(worktree_of(here, b)) for b in (args if seg[1] == "merge" else args[1:])]
     else:
         found = []
         for spec in args[1:]:
@@ -252,10 +253,19 @@ def head_problem(cwd, merge_args):
             "맞춘 뒤 그 커밋에서 다시 검증하고 병합한다" % (job.short(remote), job.short(local)))
 
 
+MERGE_WORDS = re.compile(r"\bgh\s+pr\s+merge\b|\bgit\b.*\b(merge|pull|push)\b")
+
+
 def problems(command, cwd):
     """명령 줄이 base 로 들이는 job 마다 빠진 것을 모은다. (기록, 워크트리, 빠진 것들) 의 목록."""
     out = []
-    for here, seg in located(command, cwd):
+    try:
+        parts = located(command, cwd)
+    except ValueError:
+        # 셸은 받지만 shlex 가 못 읽는 명령($'...')이다. 병합으로 보이는 글자가 있으면 세션 폴더의 기록으로 판정한다
+        found = MERGE_WORDS.search(command) and job_at(cwd)
+        return [(found[0], cwd, job.missing(found[0], cwd))] if found and job.missing(found[0], cwd) else []
+    for here, seg in parts:
         if len(seg) >= 3 and os.path.basename(seg[0]) == "gh" and seg[1:3] == ["pr", "merge"]:
             # cd 대상이 레포 밖이거나 펼쳐지지 않은 글자($WT)여서 못 찾으면 세션 폴더의 기록을 본다(예전 동작)
             found = gh_target(here, seg[3:]) or (here != cwd and gh_target(cwd, seg[3:]))

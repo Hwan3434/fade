@@ -13,10 +13,11 @@ GIT = ["git", "-c", "user.name=fade-test", "-c", "user.email=fade-test@example.i
 
 
 def fake_gh(dirpath, branch="feat/x", head=""):
-    """`gh pr view` 는 -q 의 칸에 따라 브랜치(headRefName)나 커밋(headRefOid)을, `gh pr checks` 는 검사 줄 없이 답한다."""
+    """`gh pr view` 는 -q 의 칸에 따라 브랜치(headRefName)나 커밋(headRefOid)을, `gh pr checks` 는 검사 줄 없이 답한다.
+    받은 인자는 calls.txt 에 한 줄씩 남긴다."""
     path = os.path.join(dirpath, "gh")
     with open(path, "w") as f:
-        f.write("#!/bin/sh\nif [ \"$2\" = view ]; then\n  case \"$*\" in\n"
+        f.write("#!/bin/sh\necho \"$*\" >> " + os.path.join(dirpath, "calls.txt") + "\nif [ \"$2\" = view ]; then\n  case \"$*\" in\n"
                 "    *headRefName*) printf '%%s\\n' %s ;;\n    *headRefOid*) printf '%%s\\n' %s ;;\n  esac\n  exit 0\nfi\n"
                 "exit 0\n" % (repr(branch), repr(head)))
     os.chmod(path, 0o755)
@@ -100,6 +101,14 @@ class GitMergeTest(Repo):
         subprocess.run(["git", "branch", "feat/y"], cwd=self.main, check=True)
         self.assertIsNone(self.gate("git merge feat/y", self.main))
 
+    def test_base_에서_작업_브랜치를_pull_해도_본다(self):
+        self.denied("git pull origin feat/x", self.main)
+        self.assertIsNone(self.gate("git pull origin main", self.wt))
+
+    def test_해석하지_못하는_명령의_병합도_세션_폴더의_기록으로_막는다(self):
+        self.denied("gh pr merge 3 --squash && echo $'it\\'s'", self.wt)
+        self.assertIsNone(self.gate("echo $'it\\'s'", self.wt))  # 병합이 아닌 명령은 그대로 둔다
+
     def test_작업_브랜치를_base_로_push_해도_본다(self):
         for command in ("git push origin feat/x:main", "git push origin HEAD:main", "git push origin HEAD:refs/heads/main"):
             self.denied(command, self.wt)
@@ -121,6 +130,11 @@ class OtherFolderTest(Repo):
         for command in ("cd %s && gh pr merge 3 --repo o/r" % self.outside.name, "cd $WT && gh pr merge 3",
                         'cd "$(git rev-parse --show-toplevel)" && gh pr merge 3'):
             self.assertEqual(self.gate(command, self.wt, branch="feat/none")["permissionDecision"], "deny", command)
+
+    def test_repo_를_준_병합은_PR_브랜치를_그_저장소로_묻는다(self):
+        self.denied("gh pr merge 3 --repo o/r --squash", self.main)
+        with open(os.path.join(self.bin.name, "calls.txt")) as f:
+            self.assertIn("pr view 3 --repo o/r --json headRefName -q .headRefName", f.read())
 
     def test_PR_브랜치의_워크트리가_없으면_말하지_않는다(self):
         self.assertIsNone(self.gate("gh pr merge 3 --squash", self.main, branch="feat/none"))
@@ -146,6 +160,10 @@ class OtherFolderTest(Repo):
 
     def test_승인_창_훅은_해석하지_못하는_명령에도_세션_폴더로_거부한다(self):
         out = self.ask(self.wt, tool_input={"command": "echo $'it\\'s'"})
+        self.assertEqual(out["decision"]["behavior"], "deny")
+
+    def test_승인_창_훅은_검색_도구의_폴더_경로로도_찾는다(self):
+        out = self.ask(self.main, "Grep", {"pattern": "x", "path": self.wt})
         self.assertEqual(out["decision"]["behavior"], "deny")
 
     def test_승인_창_훅은_job_과_무관한_명령에_말하지_않는다(self):
@@ -226,6 +244,11 @@ class RedOutputTest(unittest.TestCase):
         self.assertIn("red 를 기록했다", lines[0])
         self.assertIn("AssertionError: 기대 1 실제 0", r.stdout)
         self.assertIn("실패 이유", r.stdout)
+
+    def test_red_는_따옴표_없이_나뉜_명령을_받지_않는다(self):
+        r = job(self.cwd, "red", "python3", "-c", "raise SystemExit(1)")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("따옴표", r.stderr)
 
     def test_show_full_은_앞서_기록한_실패의_출력도_보인다(self):
         # 출력이 명령 글과 다르게 printf 로 찍는다. 기본 출력에도 명령은 나오기 때문이다
