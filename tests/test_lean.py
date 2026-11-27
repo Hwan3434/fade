@@ -115,6 +115,13 @@ class EvidencePathsTest(Base):
     def test_경로_없이_paths_만_주면_거부한다(self):
         self.assertNotEqual(job(self.cwd, "log", "기준 1", "echo 1", "--paths").returncode, 0)
 
+    def test_paths_앞에_아무것도_없으면_사용법을_낸다(self):
+        for cmd in ("tried", "evidence", "log"):
+            r = job(self.cwd, cmd, "--paths", "src/a.py")
+            self.assertNotEqual(r.returncode, 0)
+            self.assertIn("job.py tried", r.stderr)
+            self.assertNotIn("Traceback", r.stderr)
+
     def test_레포_밖_경로는_거부한다(self):
         self.assertNotEqual(job(self.cwd, "log", "기준 1", "echo 1", "--paths", self.out.name).returncode, 0)
 

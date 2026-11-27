@@ -135,6 +135,8 @@ def split_paths(args):
     if "--paths" not in args:
         return args, None
     i = args.index("--paths")
+    if not i:
+        sys.exit(__doc__)
     return args[:i], args[i + 1:]
 
 
