@@ -35,7 +35,7 @@ class MergeGateTest(unittest.TestCase):
         open(shot, "w").close()
         job(self.cwd, "evidence", "기준", shot)
         job(self.cwd, "tried", "써 봄", shot)
-        job(self.cwd, "review", "0")
+        job(self.cwd, "review", "0", "작은 변경이라 버그 축만")
         if door:
             job(self.cwd, "door", "two-way", "스크립트만 바뀐다")
 
@@ -136,7 +136,7 @@ class MergeGateTest(unittest.TestCase):
 
     def again(self):
         job(self.cwd, "green")
-        job(self.cwd, "review", "0")
+        job(self.cwd, "review", "0", "작은 변경이라 버그 축만")
 
     def test_증거가_기대는_경로가_안_바뀐_커밋은_다시_찍지_않아도_병합한다(self):
         self.paths_evidence()

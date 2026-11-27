@@ -1,6 +1,7 @@
 """고친 뒤 다시 하는 범위: 경로를 적은 증거와 써 보기, 고친 부분만 보는 리뷰, 리뷰 크기, show 의 짧은 출력."""
 import json
 import os
+import re
 import subprocess
 import tempfile
 import unittest
@@ -281,19 +282,22 @@ class ReviewBase(Base):
 
 
 class ReviewFilesTest(ReviewBase):
-    def test_199줄이면_버그_축만_돌린다(self):
-        commit_file(self.cwd, "src/big.py", lines(199))
-        out, _ = self.review_files()
-        first = out.splitlines()[0]
-        self.assertIn("= 199줄", first)
-        self.assertIn("버그 축만", first)
-        self.assertNotIn("명세 리뷰어를 띄운다", first)
+    """review-files 는 명세 리뷰어를 띄울지 정하지 않고 판단 재료(줄 수, 파일 수와 목록)만 알린다."""
 
-    def test_200줄이면_명세_리뷰어를_띄운다(self):
-        commit_file(self.cwd, "src/big.py", lines(200))
-        first = self.review_files()[0].splitlines()[0]
-        self.assertIn("= 200줄", first)
-        self.assertIn("명세 리뷰어를 띄운다", first)
+    def test_작은_변경도_큰_변경도_리뷰_축을_정하지_않고_판단_재료만_알린다(self):
+        for n in (3, 900):
+            commit_file(self.cwd, "src/big.py", lines(n))
+            commit_file(self.cwd, "docs/note.md", lines(n, "글"))
+            out, _ = self.review_files()
+            first = out.splitlines()[0]
+            self.assertIn("파일 2개", first)
+            self.assertIn("더한 줄 %d + 뺀 줄 0 = %d줄" % (2 * n, 2 * n), first)
+            self.assertIn("%d\t0\tsrc/big.py" % n, out)
+            self.assertIn("%d\t0\tdocs/note.md" % n, out)
+            for word in ("버그 축만", "명세 리뷰어를 띄운다", "미만", "이상"):
+                self.assertNotIn(word, out)
+            self.base = subprocess.run(["git", "rev-parse", "HEAD"], cwd=self.cwd, capture_output=True,
+                                       text=True).stdout.strip()
 
     def test_더한_줄과_뺀_줄을_합쳐_센다(self):
         commit_file(self.cwd, "src/big.py", lines(100))
@@ -301,64 +305,108 @@ class ReviewFilesTest(ReviewBase):
                                    text=True).stdout.strip()
         commit_file(self.cwd, "src/big.py", lines(99, "바꾼"))  # 100줄 빼고 99줄 더함
         first = self.review_files()[0].splitlines()[0]
-        self.assertIn("더한 줄 99 + 뺀 줄 100 = 199줄", first)
-        commit_file(self.cwd, "src/one.py", "x = 1\n")
-        self.assertIn("더한 줄 100 + 뺀 줄 100 = 200줄", self.review_files()[0].splitlines()[0])
+        self.assertIn("파일 1개, 더한 줄 99 + 뺀 줄 100 = 199줄", first)
+
+    def test_줄_수_고정_기준이_어디에도_없다(self):
+        files = ["skills/job/job.py", "skills/job/stages/review.md", "README.md", "README.en.md", "README.ja.md",
+                 "README.zh.md"]
+        for name in files:
+            with open(os.path.join(ROOT, name), encoding="utf-8") as f:
+                text = f.read()
+            self.assertNotIn("SPEC_REVIEW_LINES", text, name)
+            self.assertIsNone(re.search(r"\d+\s*(줄|lines?|行)\s*(이상|미만|or more|以上|未満|及以上)", text), name)
 
     def test_첫_리뷰는_base_와의_전체를_준다(self):
-        commit_file(self.cwd, "src/big.py", lines(200))
+        commit_file(self.cwd, "src/big.py", lines(20))
         out, diff = self.review_files()
-        self.assertIn("전체", out)
+        self.assertIn("전체", out.splitlines()[1])
         self.assertIn("+줄 0", diff)
-        self.assertIn("+줄 199", diff)
+        self.assertIn("+줄 19", diff)
 
-    def test_두_번째_리뷰는_앞_리뷰_뒤에_고친_부분만_준다(self):
-        commit_file(self.cwd, "src/big.py", lines(200))
+    def test_두_번째_리뷰는_명세_리뷰어가_본_뒤에_고친_부분만_준다(self):
+        commit_file(self.cwd, "src/big.py", lines(20))
         self.review_files()
-        job(self.cwd, "review", "1", "막는 지적 하나")
+        self.assertEqual(job(self.cwd, "review", "1", "막는 지적 하나", "--spec").returncode, 0)
         commit_file(self.cwd, "src/fix.py", "고친 줄\n")
         out, diff = self.review_files()
-        self.assertIn("고친 부분", out)
+        self.assertIn("고친 부분", out.splitlines()[1])
         self.assertIn("+고친 줄", diff)
         self.assertNotIn("+줄 0", diff)
-        self.assertIn("= 201줄", out.splitlines()[0])  # 줄 수는 늘 base 와의 전체로 센다
+        self.assertIn("= 21줄", out.splitlines()[0])  # 줄 수는 늘 base 와의 전체로 센다
+
+    def test_명세_리뷰어를_띄우지_않은_리뷰는_이유를_요약에_남겨야_받는다(self):
+        commit_file(self.cwd, "src/big.py", lines(20))
+        self.review_files()
+        for args in (("0",), ("0", " ")):
+            r = job(self.cwd, "review", *args)
+            self.assertNotEqual(r.returncode, 0, args)
+            self.assertIn("띄우지 않은 이유", r.stderr)
+        self.assertNotIn("- 리뷰(", job(self.cwd, "show").stdout)  # 기록되지 않았다
+        r = job(self.cwd, "review", "0", "글만 바꾼 한 파일이라 버그 축만")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("— 글만 바꾼 한 파일이라 버그 축만", r.stdout)
+        self.assertNotIn("명세 리뷰어도 봄", r.stdout)
+
+    def test_명세_리뷰어가_본_리뷰는_show_에_나온다(self):
+        commit_file(self.cwd, "src/big.py", lines(20))
+        self.review_files()
+        r = job(self.cwd, "review", "0", "--spec")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("명세 리뷰어도 봄", r.stdout)
+
+    def test_명세_리뷰어를_띄우지_않은_리뷰_뒤에는_명세_리뷰어가_마지막으로_본_뒤의_diff_를_준다(self):
+        commit_file(self.cwd, "src/big.py", lines(20))
+        self.review_files()
+        job(self.cwd, "review", "1", "막는 지적 하나", "--spec")
+        commit_file(self.cwd, "src/fix.py", "고친 줄\n")
+        self.review_files()
+        self.assertEqual(job(self.cwd, "review", "1", "한 줄 수정이라 버그 축만").returncode, 0)
+        commit_file(self.cwd, "src/fix2.py", "또 고친 줄\n")
+        out, diff = self.review_files()
+        self.assertIn("고친 부분", out.splitlines()[1])
+        self.assertIn("+고친 줄", diff)  # 명세 리뷰어가 보지 못한 커밋도 담는다
+        self.assertIn("+또 고친 줄", diff)
+        self.assertNotIn("+줄 0", diff)
 
     def test_앞_리뷰_커밋이_사라지면_전체를_준다(self):
-        commit_file(self.cwd, "src/big.py", lines(200))
+        commit_file(self.cwd, "src/big.py", lines(20))
         self.review_files()
-        job(self.cwd, "review", "0")
+        job(self.cwd, "review", "0", "--spec")
         self.amend()
         out, diff = self.review_files()
-        self.assertIn("전체", out)
+        self.assertIn("전체", out.splitlines()[1])
         self.assertIn("+줄 0", diff)
 
-    def test_앞_리뷰에서_명세_축이_돌지_않았으면_전체를_준다(self):
-        commit_file(self.cwd, "src/big.py", lines(150))
-        self.review_files()  # 150줄: 버그 축만
-        job(self.cwd, "review", "0")
-        commit_file(self.cwd, "src/more.py", lines(80))  # 230줄로 넘는다
+    def test_명세_리뷰어가_돈_적이_없으면_전체를_준다(self):
+        commit_file(self.cwd, "src/big.py", lines(20))
+        self.review_files()
+        job(self.cwd, "review", "0", "작은 변경이라 버그 축만")
+        commit_file(self.cwd, "src/more.py", lines(80))
         out, diff = self.review_files()
-        self.assertIn("명세 리뷰어를 띄운다", out.splitlines()[0])
-        self.assertIn("전체", out)
+        self.assertIn("전체", out.splitlines()[1])
         self.assertIn("+줄 0", diff)
 
-    def test_리뷰_입력을_만들지_않고_남긴_리뷰_뒤에는_전체를_준다(self):
-        commit_file(self.cwd, "src/big.py", lines(200))
-        job(self.cwd, "review", "0")  # review-files 없이: 명세 리뷰어가 이 커밋을 본 적이 없다
-        commit_file(self.cwd, "src/fix.py", "고친 줄\n")
-        out, diff = self.review_files()
-        self.assertIn("전체", out)
-        self.assertIn("+줄 0", diff)
-
-    def test_리뷰_입력을_만든_뒤_커밋이_바뀌고_남긴_리뷰_뒤에는_전체를_준다(self):
-        commit_file(self.cwd, "src/big.py", lines(200))
+    def test_spec_은_그_커밋에서_만든_리뷰_입력이_있어야_받는다(self):
+        commit_file(self.cwd, "src/big.py", lines(20))
+        r = job(self.cwd, "review", "0", "--spec")  # review-files 없이: 명세 리뷰어가 이 커밋을 본 적이 없다
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("review-files", r.stderr)
         self.review_files()
         commit_file(self.cwd, "src/late.py", "늦게 더한 줄\n")  # 리뷰어가 보지 못한 커밋
-        job(self.cwd, "review", "0")
-        commit_file(self.cwd, "src/fix.py", "고친 줄\n")
-        _, diff = self.review_files()
-        self.assertIn("+늦게 더한 줄", diff)
-        self.assertIn("+줄 0", diff)
+        r = job(self.cwd, "review", "0", "--spec")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("review-files", r.stderr)
+        self.assertNotIn("- 리뷰(", job(self.cwd, "show").stdout)
+
+    def test_spec_과_minor_를_함께_받지_않는다(self):
+        commit_file(self.cwd, "src/big.py", lines(20))
+        self.review_files()
+        job(self.cwd, "review", "0", "--spec")
+        commit_file(self.cwd, "src/nit.py", "사소한 수정\n")
+        self.review_files()
+        r = job(self.cwd, "review", "0", "--spec", "--minor")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("함께", r.stderr)
 
 
 class ShowTest(Base):
@@ -412,10 +460,10 @@ class MinorReviewTest(ReviewBase):
     """막는 지적이 0 이 된 뒤 사소한 지적을 한 커밋으로 고치고, 그 커밋만 버그 축으로 본 리뷰(review --minor)."""
 
     def spec_reviewed(self):
-        """200줄짜리 변경을 명세 리뷰어까지 보고 막는 지적 0 으로 남긴다."""
-        commit_file(self.cwd, "src/big.py", lines(200))
+        """변경을 명세 리뷰어까지 보고 막는 지적 0 으로 남긴다."""
+        commit_file(self.cwd, "src/big.py", lines(20))
         self.review_files()
-        self.assertEqual(job(self.cwd, "review", "0", "사소한 지적 둘").returncode, 0)
+        self.assertEqual(job(self.cwd, "review", "0", "사소한 지적 둘", "--spec").returncode, 0)
 
     def review(self):
         with open(self.state(), encoding="utf-8") as f:
@@ -455,7 +503,7 @@ class MinorReviewTest(ReviewBase):
         self.assertIn("+사소한 수정", diff)  # 명세 리뷰어가 보지 못한 사소한 수정 커밋도 담는다
         self.assertIn("+막는 지적 수정", diff)
         self.assertNotIn("+줄 0", diff)
-        self.assertEqual(job(self.cwd, "review", "0").returncode, 0)
+        self.assertEqual(job(self.cwd, "review", "0", "--spec").returncode, 0)
         self.assertNotIn("리뷰:", self.check())
         self.assertNotIn("사소한 지적을 모아 고친 커밋", job(self.cwd, "show").stdout)
 
@@ -470,12 +518,12 @@ class MinorReviewTest(ReviewBase):
         self.assertNotIn("+줄 0", diff)
 
     def test_앞_리뷰가_없거나_막는_지적이_남았으면_minor_를_받지_않는다(self):
-        commit_file(self.cwd, "src/big.py", lines(200))
+        commit_file(self.cwd, "src/big.py", lines(20))
         r = job(self.cwd, "review", "0", "--minor")
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("막는 지적이 0", r.stderr)
         self.review_files()
-        job(self.cwd, "review", "2", "막는 지적 둘")
+        job(self.cwd, "review", "2", "막는 지적 둘", "--spec")
         commit_file(self.cwd, "src/nit.py", "사소한 수정\n")
         r = job(self.cwd, "review", "0", "--minor")
         self.assertNotEqual(r.returncode, 0)
