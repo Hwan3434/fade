@@ -34,12 +34,36 @@ def without_heredoc_bodies(command):
     return "\n".join(out)
 
 
+def without_comments(command):
+    """따옴표 밖에서 낱말 첫머리의 # 부터 그 줄 끝까지를 뺀다. 줄바꿈은 남겨 다음 줄을 새 명령으로 읽게 한다.
+    shlex 의 주석 처리는 줄바꿈까지 먹어 다음 줄을 앞 명령에 붙이고, 낱말 가운데의 # 도 주석으로 읽어 쓰지 않는다."""
+    out, quote, prev, i = [], None, "\n", 0
+    while i < len(command):
+        c = command[i]
+        if quote is None and c == "#" and (prev.isspace() or prev in PUNCTUATION):
+            end = command.find("\n", i)
+            if end < 0:
+                break
+            i = end
+            continue
+        if c == "\\" and quote != "'" and i + 1 < len(command):
+            out.append(command[i:i + 2])
+            prev, i = "\\", i + 2  # 이스케이프한 공백 뒤의 # 는 낱말 가운데다
+            continue
+        if c in "'\"" and quote in (None, c):
+            quote = None if quote else c
+        out.append(c)
+        prev, i = c, i + 1
+    return "".join(out)
+
+
 def segments(command):
     """명령 줄을 실제로 실행될 단순 명령 조각(토큰 목록)들로 나눈다. 앞에 붙은 환경 변수 지정은 뗀다.
-    인용된 글자와 heredoc 본문은 명령으로 치지 않는다. 해석하지 못하면 ValueError."""
-    lex = shlex.shlex(without_heredoc_bodies(command), posix=True, punctuation_chars=PUNCTUATION)
+    인용된 글자, heredoc 본문, 주석은 명령으로 치지 않는다. 해석하지 못하면 ValueError."""
+    lex = shlex.shlex(without_comments(without_heredoc_bodies(command)), posix=True, punctuation_chars=PUNCTUATION)
     lex.whitespace_split = True
     lex.whitespace = " \t\r"  # 줄바꿈은 명령을 나누는 글자로 읽는다
+    lex.commenters = ""
     segment, found = [], []
     for tok in list(lex) + [";"]:
         if tok and set(tok) <= CONTROL:

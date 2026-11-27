@@ -18,7 +18,9 @@ stop 과 slip, 그리고 병합 훅과 승인 창 훅이 막을 때 한 줄씩 �
   job.py tried   <무엇을 어떻게> <파일>...  직접 써 본 기록과 그 화면·출력 파일
   job.py try-na  <이유>                  써 볼 화면도 명령도 없는 작업일 때
   job.py human   <사람이 볼 것>           사람만 판정할 수 있는 것이 남았을 때. 직접 써 보기를 대신하고, 병합을 막는다
-  job.py review  <남은 지적 수> [<요약>]  코드 리뷰 결과. 지금 커밋에서 남은 지적이 0 이어야 병합한다
+  job.py review-files <base>             명세 축 리뷰어에게 줄 show 출력과 base 와의 diff 를 워크트리 안
+                                         .fade-review/ (git 이 무시하는 폴더)에 쓴다. 계획서 원문은 부르는 쪽이 plan.md 로 쓴다
+  job.py review  <남은 지적 수> [<요약>]  코드 리뷰 결과. 지금 커밋에서 남은 막는 지적이 0 이어야 병합한다
   job.py door    one-way|two-way <이유와 영향 범위>
                                          되돌릴 수 있는가. 기록이 없거나 one-way(한쪽 문)면 병합을 막는다
   job.py stop    <이유>                  해결하지 못했거나 사용자 결정이 필요해 멈춘다. 병합을 막고 실수 기록에 남긴다
@@ -252,6 +254,21 @@ def show(state, cwd, full=False):
     return "\n".join(lines).replace(os.path.expanduser("~"), "~")
 
 
+def review_files(cwd, state, base):
+    """리뷰어는 읽기 도구만 있어 작업 폴더 밖을 읽으려면 승인이 필요하고, 데스크톱 앱은 파일 도구로 git 폴더에
+    쓰는 것을 막는다. 그래서 워크트리 안에 두되, 안의 .gitignore 가 폴더째 git 에서 빼게 한다."""
+    r = subprocess.run(["git", "diff", base + "...HEAD"], cwd=cwd, capture_output=True, text=True)
+    if r.returncode != 0:
+        sys.exit("base 와의 diff 를 만들지 못했다: " + r.stderr.strip())
+    top = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=cwd, capture_output=True, text=True).stdout.strip()
+    folder = os.path.join(top, ".fade-review")
+    os.makedirs(folder, exist_ok=True)
+    for name, text in ((".gitignore", "*\n"), ("show.txt", show(state, cwd) + "\n"), ("diff.patch", r.stdout)):
+        with open(os.path.join(folder, name), "w", encoding="utf-8") as f:
+            f.write(text)
+    return folder
+
+
 def need_files(paths):
     if not paths:
         sys.exit("파일이 하나도 없다. 화면이면 스크린샷, 명령이면 출력 파일의 경로를 준다")
@@ -286,7 +303,7 @@ def main(argv):
     if state is None:
         sys.exit("작업 기록이 없다. job.py start 부터 한다")
     need = {"scope": 1, "red": 1, "no-test": 1, "evidence": 2, "log": 2, "drop": 1, "tried": 1, "try-na": 1, "human": 1,
-            "review": 1, "door": 2, "stop": 1, "slip": 2, "pr": 1, "merged": 1}
+            "review": 1, "review-files": 1, "door": 2, "stop": 1, "slip": 2, "pr": 1, "merged": 1}
     if len(args) < need.get(cmd, 0):
         sys.exit(__doc__)
     if cmd == "scope":
@@ -352,6 +369,11 @@ def main(argv):
         state["pr"] = args[0]
     elif cmd == "merged":
         state["merged"] = {"commit": args[0], "ci": args[1] if len(args) > 1 else ""}
+    elif cmd == "review-files":
+        folder = review_files(cwd, state, args[0])
+        print("%s 에 show.txt, diff.patch 를 썼다. 계획서 원문을 %s 로 쓰고 세 경로를 리뷰어에게 준다"
+              % (folder, os.path.join(folder, "plan.md")))
+        return
     elif cmd == "check":
         left = missing(state, cwd)
         print("\n".join("- " + m for m in left) if left else "병합 조건을 모두 채웠다")
