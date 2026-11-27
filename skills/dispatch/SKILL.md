@@ -46,6 +46,8 @@ description: "코드 변경 작업을 워커(목표가 걸린 레포의 전용 �
 
 먼저 같은 작업이 이미 떠 있는지 본다.
 
+워커 모델을 정해서 띄운다. 사용자가 이번에 말한 값을 쓰고, 없으면 사용자 지침 파일에 적힌 값을 쓴다. 둘 다 없으면 워커가 리드의 모델을 물려받는다는 것을 띄우기 전에 사용자에게 한 줄로 알린다. 모델 이름은 사람마다 다른 값이라 이 스킬에 적지 않는다.
+
 첫 지시문은 아래뿐이다. 슬래시 명령(`/스킬`)은 받는 쪽에서 펼쳐지지 않을 수 있으니 글로 시킨다.
 
 ```markdown
@@ -58,7 +60,7 @@ fade:job 스킬로 아래 계획서를 수행한다. 사용자: 없음
 
 세션 도구(`start_session`)로 띄운다.
 
-- 레포 폴더를 `cwd` 로, `use_worktree` 를 켜고, 권한 모드는 auto(리드보다 높게는 못 띄운다), 첫 지시문을 `prompt` 로 준다. 끝나면 리드가 깨어나도록 `wake_when_done` 을 켠다.
+- 레포 폴더를 `cwd` 로, `use_worktree` 를 켜고, 권한 모드는 auto(리드보다 높게는 못 띄운다), 첫 지시문을 `prompt` 로, 정한 워커 모델을 `model` 로 준다. 끝나면 리드가 깨어나도록 `wake_when_done` 을 켠다.
 - 이어 말하기는 그 세션에 메시지를 보낸다. 넘겨받기는 사용자가 앱에서 그 세션을 연다. 세션 링크를 알린다.
 - Remote Control 로 조작 중인 턴에서는 앱이 다른 폴더의 세션 생성을 거부한다. 그 레포에 떠 있는 세션이 있으면 메시지로 맡기고, 없으면 아래 CLI 방법을 쓴다.
 
@@ -69,9 +71,10 @@ fade:job 스킬로 아래 계획서를 수행한다. 사용자: 없음
 ```bash
 git -C <레포> fetch origin <base>
 git -C <레포> worktree add --no-track -b <브랜치> <레포>/.claude/worktrees/<이름> origin/<base>
-cd <레포>/.claude/worktrees/<이름> && claude -p "<첫 지시문>" --permission-mode auto --permission-prompts none --output-format json
+cd <레포>/.claude/worktrees/<이름> && claude -p "<첫 지시문>" --model <워커 모델> --permission-mode auto --permission-prompts none --output-format json
 ```
 
+- 정한 워커 모델이 없으면 `--model` 을 뺀다.
 - 명령이 끝나면 워커가 턴을 끝낸 것이다. 출력 JSON 의 `result` 가 보고이고, `session_id` 를 적어 둔다.
 - 이어 말하기: 같은 워크트리에서 `claude -p --resume <session_id> "<말>"` 에 위와 같은 옵션을 붙인다.
 - 넘겨받기: 사용자가 그 워크트리에서 `claude --resume <session_id>` 를 친다. 이 세션은 데스크톱 앱 목록에 보이지 않는다. 사용자가 있으면 이 방법으로 띄울지 먼저 묻는다.
