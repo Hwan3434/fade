@@ -122,6 +122,45 @@ class EvidencePathsTest(Base):
             self.assertIn("job.py tried", r.stderr)
             self.assertNotIn("Traceback", r.stderr)
 
+    def test_명령이_기대는_경로를_고치면_기록하지_않는다(self):
+        r = job(self.cwd, "log", "기준 1", "echo 'a = 9' > src/a.py", "--paths", "src/a.py")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("증거: 완료 기준에 붙인", self.check())
+
+    def test_점_둘로_시작하는_레포_안_이름은_받는다(self):
+        commit_file(self.cwd, "..data/x.json", "{}\n")
+        self.assertEqual(job(self.cwd, "log", "기준 1", "echo 1", "--paths", "..data").returncode, 0)
+
+    def test_여러_줄_명령도_낡은_증거_이름은_한_줄이다(self):
+        job(self.cwd, "log", "기준 1", "echo 첫째\necho 둘째")
+        commit_file(self.cwd, "docs/x.md", "글\n")
+        line = [x for x in self.check().splitlines() if "기준 1" in x]
+        self.assertEqual(len(line), 1)
+        self.assertIn("echo 첫째 echo 둘째", line[0])
+
+    def test_링크를_경로로_적으면_링크가_가리키는_곳이_바뀌는_것도_본다(self):
+        os.symlink("a.py", os.path.join(self.cwd, "src", "link.py"))
+        subprocess.run(["git", "add", "src/link.py"], cwd=self.cwd, check=True)
+        subprocess.run(GIT + ["commit", "-q", "-m", "링크"], cwd=self.cwd, check=True)
+        self.assertEqual(job(self.cwd, "log", "기준 1", "echo 1", "--paths", "src/link.py").returncode, 0)
+        os.remove(os.path.join(self.cwd, "src", "link.py"))
+        os.symlink("b.py", os.path.join(self.cwd, "src", "link.py"))
+        subprocess.run(["git", "add", "src/link.py"], cwd=self.cwd, check=True)
+        subprocess.run(GIT + ["commit", "-q", "-m", "링크를 바꿈"], cwd=self.cwd, check=True)
+        self.assertIn("「기준 1」의 낡은 증거", self.check())
+
+    def test_커밋을_모르는_옛_기록이_있어도_show_가_죽지_않는다(self):
+        job(self.cwd, "log", "기준 1", "echo 1")
+        job(self.cwd, "tried", "써 봄", self.shot())
+        with open(self.state(), encoding="utf-8") as f:
+            state = json.load(f)
+        del state["evidence"][0]["head"], state["tried"][0]["head"]
+        with open(self.state(), "w", encoding="utf-8") as f:
+            json.dump(state, f)
+        r = job(self.cwd, "show")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("기준 1", r.stdout)
+
     def test_레포_밖_경로는_거부한다(self):
         self.assertNotEqual(job(self.cwd, "log", "기준 1", "echo 1", "--paths", self.out.name).returncode, 0)
 
@@ -161,18 +200,18 @@ class TriedPathsTest(Base):
     def test_경로가_바뀌면_써_보기가_무효다(self):
         job(self.cwd, "tried", "명령으로 써 봄", self.shot(), "--paths", "src/a.py")
         commit_file(self.cwd, "src/a.py", "a = 2\n")
-        self.assertIn("직접 써 보기", self.check())
+        self.assertIn("직접 써 보기: 낡은 기록", self.check())
 
     def test_경로를_적지_않은_써_보기는_지금_커밋의_것만_친다(self):
         job(self.cwd, "tried", "명령으로 써 봄", self.shot())
         self.assertNotIn("직접 써 보기", self.check())
         commit_file(self.cwd, "docs/x.md", "글\n")
-        self.assertIn("직접 써 보기", self.check())
+        self.assertIn("직접 써 보기: 낡은 기록", self.check())
 
     def test_찍은_커밋이_사라지면_써_보기가_무효다(self):
         job(self.cwd, "tried", "명령으로 써 봄", self.shot(), "--paths", "src/a.py")
         self.amend()
-        self.assertIn("직접 써 보기", self.check())
+        self.assertIn("직접 써 보기: 낡은 기록", self.check())
 
     def test_유효한_써_보기가_낡은_써_보기를_가리지_않는다(self):
         job(self.cwd, "tried", "A 화면", self.shot("a.png"), "--paths", "src/a.py")
@@ -212,14 +251,14 @@ class ReviewFilesTest(Base):
         commit_file(self.cwd, "src/big.py", lines(199))
         out, _ = self.review_files()
         first = out.splitlines()[0]
-        self.assertIn("199줄", first)
+        self.assertIn("= 199줄", first)
         self.assertIn("버그 축만", first)
         self.assertNotIn("명세 리뷰어를 띄운다", first)
 
     def test_200줄이면_명세_리뷰어를_띄운다(self):
         commit_file(self.cwd, "src/big.py", lines(200))
         first = self.review_files()[0].splitlines()[0]
-        self.assertIn("200줄", first)
+        self.assertIn("= 200줄", first)
         self.assertIn("명세 리뷰어를 띄운다", first)
 
     def test_더한_줄과_뺀_줄을_합쳐_센다(self):
@@ -228,9 +267,9 @@ class ReviewFilesTest(Base):
                                    text=True).stdout.strip()
         commit_file(self.cwd, "src/big.py", lines(99, "바꾼"))  # 100줄 빼고 99줄 더함
         first = self.review_files()[0].splitlines()[0]
-        self.assertIn("199줄", first)
+        self.assertIn("더한 줄 99 + 뺀 줄 100 = 199줄", first)
         commit_file(self.cwd, "src/one.py", "x = 1\n")
-        self.assertIn("200줄", self.review_files()[0].splitlines()[0])
+        self.assertIn("더한 줄 100 + 뺀 줄 100 = 200줄", self.review_files()[0].splitlines()[0])
 
     def test_첫_리뷰는_base_와의_전체를_준다(self):
         commit_file(self.cwd, "src/big.py", lines(200))
@@ -248,7 +287,7 @@ class ReviewFilesTest(Base):
         self.assertIn("고친 부분", out)
         self.assertIn("+고친 줄", diff)
         self.assertNotIn("+줄 0", diff)
-        self.assertIn("201줄", out.splitlines()[0])  # 줄 수는 늘 base 와의 전체로 센다
+        self.assertIn("= 201줄", out.splitlines()[0])  # 줄 수는 늘 base 와의 전체로 센다
 
     def test_앞_리뷰_커밋이_사라지면_전체를_준다(self):
         commit_file(self.cwd, "src/big.py", lines(200))
@@ -302,7 +341,7 @@ class ShowTest(Base):
                               text=True).stdout.strip()
         line = [x for x in out.splitlines() if "기준 1" in x]
         self.assertEqual(len(line), 1, out)
-        for word in ("0", "3", head):
+        for word in ("증거 2개", "종료 코드 0, 3", "커밋 " + head):
             self.assertIn(word, line[0])
         for word in ("echo 경우", ".log", "화면.png", "try.png", "src/a.py"):
             self.assertNotIn(word, out)

@@ -148,8 +148,10 @@ def repo_paths(cwd, paths):
         sys.exit("--paths 뒤에 경로가 없다")
     top, out = top_dir(cwd), []
     for p in paths:
-        rel = os.path.relpath(os.path.realpath(os.path.join(cwd, p)), top)
-        if rel.startswith(".."):
+        # 레포 밖인지는 링크를 따라간 자리로 보고, 적는 경로는 링크 그대로 둔다. 링크가 가리키는 곳이 바뀌는 것도 변경이다
+        real = os.path.relpath(os.path.realpath(os.path.join(cwd, p)), top)
+        rel = os.path.relpath(os.path.normpath(os.path.join(os.path.realpath(cwd), p)), top)
+        if any(r == ".." or r.startswith(".." + os.sep) for r in (real, rel)):
             sys.exit("레포 밖의 경로다: " + p)
         if rel == "." or not os.path.exists(os.path.join(top, rel)):
             sys.exit("없는 경로다(레포 전체는 받지 않는다): " + p)
@@ -157,10 +159,18 @@ def repo_paths(cwd, paths):
         if not tracked.strip():
             sys.exit("git 이 추적하는 파일이 없는 경로다: " + p)
         out.append(rel)
-    changed = subprocess.run(["git", "status", "--porcelain", "--", *out], cwd=top, capture_output=True, text=True).stdout
+    need_clean(cwd, out)
+    return out
+
+
+def need_clean(cwd, rels):
+    """레포 기준 경로들에 커밋 전 변경이나 추적하지 않는 파일이 있으면 받지 않는다. 찍은 내용이 지금 커밋과 달라서다."""
+    if not rels:
+        return
+    changed = subprocess.run(["git", "status", "--porcelain", "--untracked-files=all", "--", *rels], cwd=top_dir(cwd), capture_output=True,
+                             text=True).stdout
     if changed.strip():
         sys.exit("그 경로에 커밋 전 변경이나 추적하지 않는 파일이 있다. 커밋한 뒤 찍는다\n" + changed.rstrip())
-    return out
 
 
 def holds(cwd, record, now):
@@ -177,6 +187,7 @@ def holds(cwd, record, now):
 def name_of(record):
     """낡은 증거나 써 보기를 가리킬 짧은 이름."""
     text = record.get("what") or record.get("cmd") or ", ".join(os.path.basename(f) for f in record["files"])
+    text = " ".join(text.split())  # 여러 줄 명령이 빠진 것 목록의 한 항목을 여러 줄로 가르지 않게 한다
     return "`%s`" % (text if len(text) <= 80 else text[:77] + "...")
 
 
@@ -295,7 +306,7 @@ def file_lines(files):
 
 
 def commits(records):
-    return ", ".join(dict.fromkeys(at(r) for r in records))
+    return ", ".join(dict.fromkeys(at(r) for r in records if r.get("head"))) or "모름"
 
 
 def detail(record):
@@ -309,7 +320,7 @@ def show(state, cwd, full=False):
     lines = ["상태: " + status(state), "", "## 작업 기록 (fade job)", "", "- 작업: " + state["title"],
              "- 범위: " + ("PR 까지" if state["scope"] == "pr" else "병합까지")]
     if state.get("unattended"):
-        lines.append("- 사람 없음: 승인 창이 뜨면 기다리지 않고 거부되어 멈춘다")
+        lines.append("- 사람 없음: 승인 창이 뜨면 기다리지 않고 거부된다")
     if state.get("stopped"):
         lines.append("- 멈춤: " + state["stopped"])
     if state["no_test"]:
@@ -332,7 +343,7 @@ def show(state, cwd, full=False):
     if state["tried"]:
         lines.append("- 직접 써 보기:")
         for t in state["tried"]:
-            lines.append("  - " + t["what"] + (detail(t) if full else " (커밋 %s)" % at(t)))
+            lines.append("  - " + t["what"] + (detail(t) if full else " (커밋 %s)" % commits([t])))
             lines += file_lines(t["files"]) if full else []
     if state["try_na"]:
         lines.append("- 직접 써 보기: 해당 없음 — " + state["try_na"])
@@ -458,6 +469,7 @@ def main(argv):
             sys.exit(__doc__)
         paths = repo_paths(cwd, paths)
         code, out = run(cwd, args[1])
+        need_clean(cwd, paths)  # 명령이 그 경로를 고쳤으면 지금 커밋의 내용으로 찍힌 증거가 아니다
         logs = os.path.join(git_dir(cwd), "fade-job-logs")
         os.makedirs(logs, exist_ok=True)
         path = os.path.join(logs, "%02d.log" % (len([f for f in os.listdir(logs) if f.endswith(".log")]) + 1))

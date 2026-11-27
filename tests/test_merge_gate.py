@@ -137,8 +137,8 @@ class MergeGateTest(unittest.TestCase):
         self.again()
         out = self.gate("gh pr merge 3 --squash", head=self.head())
         self.assertEqual(out["permissionDecision"], "deny")
-        self.assertIn("증거", out["permissionDecisionReason"])
-        self.assertIn("직접 써 보기", out["permissionDecisionReason"])
+        self.assertIn("낡은 증거", out["permissionDecisionReason"])
+        self.assertIn("직접 써 보기: 낡은 기록", out["permissionDecisionReason"])
 
     def test_PR_최신_커밋이_검증한_로컬_HEAD_와_다르면_막는다(self):
         commit_and_switch(self.cwd, "feat/x")
