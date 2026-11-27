@@ -3,7 +3,8 @@
 
 받은 앞 리뷰(없으면 작업 시작) 뒤의 세션 기록 파일들(본체와 하위 에이전트) 가운데, code-review 의 지시문이 나온 뒤
 같은 파일에서 diff 를 읽은 곳이 있어야 한다. 읽은 것으로 치는 것은 둘이다.
-- `job.py review-files` 가 이 커밋에서 쓴 `.fade-review/bug.patch` 를 끝 줄까지 덮은 Read(실패한 것은 빼고).
+- `job.py review-files` 가 이 커밋에서 쓴 `.fade-review/bug.patch` 의 모든 줄을 결과로 보여 준 Read 들(실패한 것은 빼고).
+  덮었는지는 Read 결과의 줄 번호로 센다. Read 는 limit 없이도 토큰 한도에 걸리면 앞부분만 돌려준다.
 - 범위를 준 `git diff` 로, 파일을 줄이지 않고(-- 경로, --stat 등) 출력이 잘리지 않은 것. 앞 리뷰가 없으면 base 와의
   전체(`<base>...<브랜치>`)여야 한다.
 같은 파일이어야 하는 것은 명세 리뷰어(다른 하위 에이전트)가 읽은 것을 버그 축의 증거로 치지 않기 위해서다.
@@ -14,6 +15,7 @@ import datetime
 import glob
 import json
 import os
+import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -21,7 +23,7 @@ import merge_gate  # noqa: E402
 from merge_gate import job  # noqa: E402
 
 MARKER = "## Phase 0 — Gather the diff"  # code-review 지시문의 머리. 앱은 본체 기록에, CLI 는 하위 에이전트 기록에 남긴다
-READ_LIMIT = 2000  # Read 도구가 limit 없이 한 번에 읽는 줄 수
+NUMBERED = re.compile(r"^ *(\d+)\t", re.M)  # Read 결과의 줄 번호(cat -n 꼴). 토큰 한도로 잘리면 앞부분 번호만 온다
 SHORTENING = {"--stat", "--numstat", "--shortstat", "--name-only", "--name-status", "--dirstat", "--summary"}
 TRUNCATED = ("Output too large", "<persisted-output>")
 
@@ -81,23 +83,17 @@ def whole_git_diff(command, cwd, first):
     return False
 
 
-def covered(reads, total):
-    """Read 들(offset, limit)이 1..total 줄을 모두 덮었는가."""
-    spans = sorted((int(o or 1), int(o or 1) + int(n or READ_LIMIT)) for o, n in reads)
-    upto = 1
-    for start, end in spans:
-        if start > upto:
-            break
-        upto = max(upto, end)
-    return upto > total
+def seen_lines(part):
+    """Read 결과가 실제로 보여 준 줄 번호들. offset·limit 이 아니라 결과 글로 센다(limit 없이도 잘려 올 수 있다)."""
+    return {int(n) for n in NUMBERED.findall(result_text(part))}
 
 
 def evidence(path, since, wt, patch, total, first):
     """이 기록 파일에 code-review 지시문 뒤의 diff 읽기가 있는가."""
-    started, calls, reads = False, {}, []
+    started, calls, seen = False, {}, set()
     for part in rows(path, since):
         if part["type"] == "text" and MARKER in (part.get("text") or ""):
-            started, calls, reads = True, {}, []
+            started, calls, seen = True, {}, set()
         elif started and part["type"] == "tool_use":
             calls[part.get("id")] = part
         elif started and part["type"] == "tool_result" and not part.get("is_error"):
@@ -106,8 +102,8 @@ def evidence(path, since, wt, patch, total, first):
                 continue
             given = call.get("input") or {}
             if call.get("name") == "Read" and os.path.realpath(given.get("file_path", "")) == patch:
-                reads.append((given.get("offset"), given.get("limit")))
-                if covered(reads, total):
+                seen |= seen_lines(part)
+                if seen >= set(range(1, total + 1)):
                     return True
             elif call.get("name") == "Bash" and not any(t in result_text(part) for t in TRUNCATED):
                 if whole_git_diff(given.get("command") or "", wt, first):
