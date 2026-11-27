@@ -18,12 +18,14 @@ class RecordOutputTest(unittest.TestCase):
         self.repo = git_repo()
         self.addCleanup(self.repo.cleanup)
         self.cwd = self.repo.name
-        self.out = tempfile.TemporaryDirectory()  # 스크린샷 같은 증거 파일은 레포 밖에 둔다
-        self.addCleanup(self.out.cleanup)
         commit_and_switch(self.cwd, "feat/x")
 
     def shot(self, name="shot.png"):
-        path = os.path.join(self.out.name, name)
+        # 증거 파일은 tester 가 남기는 자리(git 폴더 안 fade-try/)에 둔다. 레포 밖 임시 폴더의 파일은 받지 않는다
+        folder = os.path.join(subprocess.run(["git", "rev-parse", "--absolute-git-dir"], cwd=self.cwd,
+                                             capture_output=True, text=True).stdout.strip(), "fade-try")
+        os.makedirs(folder, exist_ok=True)
+        path = os.path.join(folder, name)
         open(path, "w").close()
         return path
 
@@ -55,7 +57,7 @@ class RecordOutputTest(unittest.TestCase):
         self.assertIn("0", self.short("review", "0", "작은 변경이라 버그 축만"))
         self.assertIn("양쪽 문", self.short("door", "two-way", "revert 하면 돌아간다"))
         self.short("pr", "https://github.com/o/r/pull/7")
-        self.short("slip", "user", "PR 본문에 번호를 썼다")
+        self.short("slip", "user", "pr-number", "PR 본문에 번호를 썼다")
         self.short("stop", "같은 실패를 두 번 고쳐도 남는다")
         self.assertIn("abc1234", self.short("merged", "abc1234", "base CI 통과"))
 

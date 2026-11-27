@@ -8,6 +8,10 @@ import unittest
 from helpers import GATE, commit_and_switch, commit_file, fake_gh, git_repo, job, mistakes
 
 
+def job_dir(cwd):
+    return subprocess.run(["git", "rev-parse", "--absolute-git-dir"], cwd=cwd, capture_output=True, text=True).stdout.strip()
+
+
 class MergeGateTest(unittest.TestCase):
     def setUp(self):
         self.repo = git_repo()
@@ -129,7 +133,7 @@ class MergeGateTest(unittest.TestCase):
         job(self.cwd, "red", "test -f missing.txt")
         commit_file(self.cwd, "missing.txt", "")
         job(self.cwd, "green")
-        shot = os.path.join(self.bin.name, "s.png")
+        shot = os.path.join(job_dir(self.cwd), "s.png")  # 레포 밖 임시 폴더의 파일은 증거로 받지 않는다
         open(shot, "w").close()
         job(self.cwd, "log", "기준", "echo 실제=1", "--paths", "src/a.py")
         job(self.cwd, "tried", "써 봄", shot, "--paths", "src/a.py")

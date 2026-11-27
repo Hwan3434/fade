@@ -9,7 +9,8 @@
 병합 조건의 green 과 리뷰는 지금 커밋에서 찍힌 것만 친다. 증거와 써 보기는 지금 커밋에서 찍혔거나,
 기대는 경로(--paths)를 적었고 찍은 커밋 뒤로 그 경로가 바뀌지 않았으면 친다. 낡은 것이 하나라도 남으면 막는다.
 실수 기록은 작업과 레포를 넘어 모이는 한 파일(~/.claude/fade/mistakes.jsonl, 환경 변수 FADE_MISTAKES 로 바꾼다)이다.
-stop 과 slip, 그리고 병합 훅과 승인 창 훅이 막을 때 한 줄씩 붙는다.
+stop 과 slip, 그리고 병합 훅과 승인 창 훅이 막을 때 한 줄씩 붙는다. 레포가 OS 임시 폴더 아래에 있으면(테스트, 써 보기)
+FADE_MISTAKES 를 정하지 않은 동안 쓰지 않는다. PR 을 기록하면 이 작업에서 붙인 줄의 빈 pr 칸을 채운다.
 
   job.py start   <제목> [--pr-only] [--unattended]
                                          작업을 시작한다. PR 까지만이면 --pr-only, 계획서가 「사용자: 없음」이면 --unattended
@@ -21,7 +22,8 @@ stop 과 slip, 그리고 병합 훅과 승인 창 훅이 막을 때 한 줄씩 �
   job.py green                           red 의 명령을 다시 돌려 통과할 때만 기록한다 (구현 후)
   job.py no-test <이유>                  레포에 테스트 실행 장치가 없을 때 red·green 대신 이유를 적는다
   job.py evidence <완료 기준> <파일>... [--paths <경로>...]
-                                         스크린샷, 로그 같은 증거 파일을 기준에 붙인다
+                                         스크린샷, 로그 같은 증거 파일을 기준에 붙인다. 이 레포 밖의 OS 임시 폴더에 있는
+                                         파일은 지워질 수 있어 받지 않는다(tried 도 같다). git 폴더 안 fade-try/ 에 둔다
   job.py log     <완료 기준> <명령> [--paths <경로>...]
                                          명령을 돌려 출력 전체를 파일로 남기고 증거로 붙인다. 출력은 종료 코드가 0 이 아닐 때만
                                          끝 40줄을 찍는다. 전체는 로그 파일에 있다
@@ -46,11 +48,14 @@ stop 과 slip, 그리고 병합 훅과 승인 창 훅이 막을 때 한 줄씩 �
                                          버그 축으로 본 리뷰다. 앞 리뷰가 막는 지적 0 이고 그 뒤의 커밋이 하나일 때만 받는다
   job.py door    one-way|two-way <이유와 영향 범위>
                                          되돌릴 수 있는가. 기록이 없거나 one-way(한쪽 문)면 병합을 막는다
-  job.py ask     <질문>                  사용자에게 물은 것을 남긴다. 답을 적기 전까지 show 의 상태 줄 바로 아래에 번호째 나온다
+  job.py ask     <질문>                  사용자에게 물은 것을 남긴다. 답을 적기 전까지 show 의 상태 줄 바로 아래에 번호째 나온다.
+                                         보고에는 첫 줄인 기록 주소 다음에 번호째 다시 적는다
   job.py answered <번호> <답>            사용자에게 받은 답을 적는다
   job.py stop    <이유>                  해결하지 못했거나 사용자 결정이 필요해 멈춘다. 병합을 막고 실수 기록에 남긴다
-  job.py slip    review|ci|user <무엇을 잘못했나>
-                                         리뷰에서 고친 막는 지적, CI 실패, 사용자 지적을 실수 기록에 남긴다
+  job.py slip    review|ci|try|user <key> <무엇을 잘못했나>
+                                         리뷰에서 고친 막는 지적, CI 실패, 써 보기(tester)가 찾은 버그, 사용자 지적을 실수 기록에
+                                         남긴다. key 는 같은 실수끼리 묶는 이름(영문 소문자, 숫자, -)이다. 같은 실수의 key 가
+                                         이미 있으면 그것을 쓴다. key 를 빼면 받지 않고 있는 key 를 알린다
   job.py mark    <줄 번호> key|handled <값>
                                          실수 기록 한 줄의 key(같은 실수끼리 묶는 이름)나 처리를 적는다. git 레포 밖에서도 돈다
   job.py pr      <PR 주소>
@@ -62,11 +67,14 @@ stop 과 slip, 그리고 병합 훅과 승인 창 훅이 막을 때 한 줄씩 �
                                          파일(워크트리가 지워져도 남는다)에 쓰고 그 절대 경로만 찍는다. PR 이 없거나 기록 댓글이
                                          실패한 작업의 보고가 가리킨다
 """
+import contextlib
+import fcntl
 import json
 import os
 import re
 import subprocess
 import sys
+import tempfile
 import time
 
 TAIL = 40
@@ -250,8 +258,57 @@ def put(records, new, same):
     records.append(new)
 
 
+SOURCES = ("review", "ci", "try", "user")  # slip 이 받는 출처. gate, permission, stop 은 훅과 stop 이 스스로 쓴다
+KEY = re.compile(r"[a-z0-9]+(-[a-z0-9]+)*")
+
+
 def mistakes_path():
     return os.environ.get("FADE_MISTAKES") or os.path.expanduser("~/.claude/fade/mistakes.jsonl")
+
+
+def under_temp(path):
+    """OS 임시 폴더 아래인가. macOS 의 /tmp 와 /var/folders 는 /private 아래를 가리키는 링크라 realpath 로 견준다."""
+    real = os.path.realpath(path)
+    roots = {os.path.realpath(r) for r in (tempfile.gettempdir(), "/tmp", "/var/folders") if os.path.isdir(r)}
+    return any(real == r or real.startswith(r + os.sep) for r in roots)
+
+
+@contextlib.contextmanager
+def mistakes_lock(path):
+    """실수 기록은 여러 세션(워커, 훅)이 함께 쓴다. 붙이기와 다시 쓰기(pr, mark)가 같은 잠금을 잡아,
+    다시 쓰는 사이 붙은 줄을 잃지 않게 한다."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path + ".lock", "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        yield
+
+
+def mistake_rows():
+    path = mistakes_path()
+    if not os.path.exists(path):
+        return []
+    with open(path, encoding="utf-8") as f:
+        return [row for row in map(loads, f) if row]
+
+
+def loads(line):
+    """실수 기록 한 줄. 손으로 고치다 깨진 줄은 None 이다. 깨진 줄 하나로 slip 과 pr 이 죽지 않게 한다."""
+    try:
+        return json.loads(line) if line.strip() else None
+    except ValueError:
+        return None
+
+
+def mask(text):
+    """공개 PR 에도 붙는 글에서 사용자 이름이 든 홈 경로를 줄인다. Claude 가 경로로 만드는 폴더 이름
+    (세션 임시 폴더, 세션 기록 폴더)은 영숫자가 아닌 글자를 모두 - 로 바꾼 꼴(-Users-<이름>-)이라 그것도 가린다."""
+    home = os.path.expanduser("~").rstrip("/")
+    if not home:  # 홈이 / 면 가릴 이름이 없다
+        return text
+    dashed = re.sub(r"[^A-Za-z0-9]", "-", home)
+    # 이름 뒤가 이름에 쓰이는 글자면 다른(더 긴 이름의) 사용자다. 점은 뒤에 글자가 이어질 때만 이름이다(문장 끝 마침표)
+    text = re.sub(re.escape(home) + r"(?![A-Za-z0-9_-]|\.[A-Za-z0-9])", "~", text)
+    return re.sub(re.escape(dashed) + r"(?![A-Za-z0-9])", "-~", text)
 
 
 def main_checkout(cwd):
@@ -262,31 +319,80 @@ def main_checkout(cwd):
     return os.path.dirname(common) if r.returncode == 0 and os.path.basename(common) == ".git" else common
 
 
-def add_mistake(cwd, state, source, what):
-    """실수 기록에 한 줄을 붙인다. 파일과 폴더가 없으면 만든다."""
-    row = {"time": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "repo": main_checkout(cwd), "branch": branch(cwd),
-           "pr": state.get("pr") or "", "source": source, "what": what, "key": "", "handled": ""}
+def add_mistake(cwd, state, source, what, key=""):
+    """실수 기록에 한 줄을 붙인다. 파일과 폴더가 없으면 만든다. 쓴 파일의 경로를 돌려준다.
+    임시 폴더의 레포(테스트, 써 보기)에서 FADE_MISTAKES 를 정하지 않았으면 쓰지 않고 None 을 돌려준다.
+    훅도 이 함수로 쓰니 막는 자리가 여기 하나다."""
+    repo = main_checkout(cwd)
+    if not os.environ.get("FADE_MISTAKES") and under_temp(repo):
+        return None
+    row = {"time": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "repo": repo, "branch": branch(cwd),
+           "pr": state.get("pr") or "", "source": source, "what": what, "key": key, "handled": ""}
     path = mistakes_path()
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "a", encoding="utf-8") as f:
+    with mistakes_lock(path), open(path, "a", encoding="utf-8") as f:
         f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    return path
+
+
+def fill_pr(cwd, state):
+    """리뷰 slip 과 승인 창 훅의 줄은 PR 을 열기 전에 찍혀 pr 칸이 빈다. 이 작업(같은 레포, 같은 브랜치,
+    작업을 시작한 뒤)의 줄 가운데 pr 이 빈 것에 PR 을 채운다. 같은 브랜치 이름을 다시 쓴 예전 작업의 줄은 건드리지 않는다."""
+    path, repo, now, since = mistakes_path(), main_checkout(cwd), branch(cwd), int(state.get("started") or 0)
+    if not os.path.exists(path):
+        return
+    with mistakes_lock(path):
+        rewrite(path, lambda lines: fill_lines(lines, state["pr"], repo, now, since))
+
+
+def rewrite(path, change):
+    """잠금을 잡은 채로 부른다. 줄 목록을 change 로 고쳐 바뀌었으면 통째로 바꿔 쓴다."""
+    with open(path, encoding="utf-8") as f:
+        lines = f.read().splitlines()
+    if change(lines):
+        with open(path + ".tmp", "w", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")
+        os.replace(path + ".tmp", path)
+
+
+def fill_lines(lines, pr, repo, now, since):
+    changed = False
+    for i, line in enumerate(lines):
+        row = loads(line)
+        if not row:
+            continue
+        try:
+            at_ = time.mktime(time.strptime(row["time"][:19], "%Y-%m-%dT%H:%M:%S"))
+        except (KeyError, ValueError):
+            continue
+        if row.get("pr") or row.get("repo") != repo or row.get("branch") != now or at_ < since:
+            continue
+        row["pr"] = pr
+        lines[i] = json.dumps(row, ensure_ascii=False)
+        changed = True
+    return changed
 
 
 def mark(args):
     if len(args) < 3 or args[1] not in ("key", "handled"):
         sys.exit("job.py mark <줄 번호> key|handled <값>")
     path = mistakes_path()
-    lines = open(path, encoding="utf-8").read().splitlines() if os.path.exists(path) else []
-    if not args[0].isdigit() or not 1 <= int(args[0]) <= len(lines):
-        sys.exit("실수 기록에 없는 줄이다: %s (%d줄)" % (args[0], len(lines)))
-    n = int(args[0]) - 1
-    row = json.loads(lines[n])
-    row[args[1]] = args[2]
-    lines[n] = json.dumps(row, ensure_ascii=False)
-    with open(path + ".tmp", "w", encoding="utf-8") as f:
-        f.write("\n".join(lines) + "\n")
-    os.replace(path + ".tmp", path)
-    print("%d: %s" % (n + 1, lines[n]))
+    if not os.path.exists(path):
+        sys.exit("실수 기록에 없는 줄이다: %s (0줄)" % args[0])
+    done = []
+
+    def change(lines):
+        if not args[0].isdigit() or not 1 <= int(args[0]) <= len(lines):
+            sys.exit("실수 기록에 없는 줄이다: %s (%d줄)" % (args[0], len(lines)))
+        n = int(args[0]) - 1
+        row = json.loads(lines[n])
+        row[args[1]] = args[2]
+        lines[n] = json.dumps(row, ensure_ascii=False)
+        done.append("%d: %s" % (n + 1, lines[n]))
+        return True
+
+    with mistakes_lock(path):
+        rewrite(path, change)
+    print(done[0])
 
 
 def status(state):
@@ -380,7 +486,7 @@ def show(state, cwd, full=False):
     open_ = ["%d. %s" % (q["id"], q["question"]) for q in open_questions(state)]
     lines = ["상태: " + status(state)]
     if open_:
-        lines += ["답을 받지 못한 질문 (보고 맨 위에 번호째 다시 적는다):"] + open_
+        lines += ["답을 받지 못한 질문 (보고의 첫 줄인 기록 주소 다음에 번호째 다시 적는다):"] + open_
     lines += ["", "## 작업 기록 (fade job)", "", "- 작업: " + state["title"],
               "- 범위: " + ("PR 까지" if state["scope"] == "pr" else "병합까지")]
     for q in questions:
@@ -429,8 +535,7 @@ def show(state, cwd, full=False):
         lines.append("- PR: " + state["pr"])
     if state["merged"]:
         lines.append("- 병합: " + state["merged"]["commit"] + (" · " + state["merged"]["ci"] if state["merged"]["ci"] else ""))
-    # 이 출력은 공개 PR 에도 붙으니 사용자 이름이 든 홈 경로를 줄인다
-    return "\n".join(lines).replace(os.path.expanduser("~"), "~")
+    return mask("\n".join(lines))
 
 
 def review_files(cwd, state, base):
@@ -479,13 +584,22 @@ def minor_spec_head(cwd, prev, now):
     return prev.get("spec_head")
 
 
-def need_files(paths):
+def need_files(cwd, paths):
     if not paths:
         sys.exit("파일이 하나도 없다. 화면이면 스크린샷, 명령이면 출력 파일의 경로를 준다")
+    mine = [top_dir(cwd), os.path.realpath(git_dir(cwd))]
     for p in paths:
         if not os.path.isfile(p):
             sys.exit("없는 파일: " + p)
+        real = os.path.realpath(p)
+        # 세션 임시 폴더는 지워질 수 있고 경로에 사용자 이름이 든다. 레포 자신이 임시 폴더에 있으면(테스트) 그 안은 받는다
+        if under_temp(real) and not any(real.startswith(m + os.sep) for m in mine):
+            sys.exit("레포 밖 임시 폴더의 파일이다(지워질 수 있다): %s\n`$(git rev-parse --absolute-git-dir)/fade-try/` "
+                     "아래로 옮겨 붙인다" % p)
     return [os.path.abspath(p) for p in paths]
+
+
+NOT_WRITTEN = "임시 폴더의 레포라 실수 기록에 쓰지 않았다(FADE_MISTAKES 를 정하면 쓴다)"
 
 
 def main(argv):
@@ -518,7 +632,7 @@ def main(argv):
     if state is None:
         sys.exit("작업 기록이 없다. job.py start 부터 한다")
     need = {"scope": 1, "red": 1, "no-test": 1, "evidence": 2, "log": 2, "tried": 1, "try-na": 1, "human": 1,
-            "review": 1, "review-files": 1, "door": 2, "ask": 1, "answered": 2, "stop": 1, "slip": 2, "pr": 1, "merged": 1}
+            "review": 1, "review-files": 1, "door": 2, "ask": 1, "answered": 2, "stop": 1, "slip": 1, "pr": 1, "merged": 1}
     if len(args) < need.get(cmd, 0):
         sys.exit(usage(cmd))
     if cmd == "show":
@@ -558,7 +672,7 @@ def main(argv):
         state["no_test"] = args[0]
         said = "테스트 없음을 기록했다: " + brief(args[0])
     elif cmd == "evidence":
-        record = {"criterion": args[0], "files": need_files(args[1:]), "paths": repo_paths(cwd, paths), **where(cwd)}
+        record = {"criterion": args[0], "files": need_files(cwd, args[1:]), "paths": repo_paths(cwd, paths), **where(cwd)}
         put(state["evidence"], record, ("criterion", "files"))
         said = "증거를 기록했다: 「%s」 ← 파일 %d개 (%s)" % (brief(args[0]), len(record["files"]), taken(record))
     elif cmd == "drop":
@@ -590,7 +704,7 @@ def main(argv):
             said += ("\n종료 코드가 0 이 아니라 출력 끝(%d줄까지)을 붙인다. 전체는 로그 파일에 있다:\n%s" % (TAIL, tail_of(out))
                      if out.strip() else "\n종료 코드가 0 이 아니고, 명령이 아무것도 찍지 않았다")
     elif cmd == "tried":
-        record = {"what": args[0], "files": need_files(args[1:]), "paths": repo_paths(cwd, paths), **where(cwd)}
+        record = {"what": args[0], "files": need_files(cwd, args[1:]), "paths": repo_paths(cwd, paths), **where(cwd)}
         put(state["tried"], record, ("what",))
         said = "써 보기를 기록했다: %s (파일 %d개, %s)" % (name_of(record), len(record["files"]), taken(record))
     elif cmd == "try-na":
@@ -647,15 +761,23 @@ def main(argv):
     elif cmd == "stop":
         state["stopped"] = args[0]
         save(cwd, state)
-        add_mistake(cwd, state, "stop", args[0])
-        said = "멈춤을 기록했다: %s. 병합을 막고 실수 기록에 남겼다" % brief(args[0])
+        written = add_mistake(cwd, state, "stop", args[0])
+        said = "멈춤을 기록했다: %s. 병합을 막고 %s" % (brief(args[0]), "실수 기록에 남겼다" if written else NOT_WRITTEN)
     elif cmd == "slip":
-        if args[0] not in ("review", "ci", "user") or not args[1].strip():
-            sys.exit("job.py slip review|ci|user \"<무엇을 잘못했나>\". 병합 훅·승인 창 훅·stop 은 스스로 남긴다")
-        add_mistake(cwd, state, args[0], args[1])
-        said = "실수 기록에 남겼다(%s): %s" % (args[0], brief(args[1]))
+        keys = list(dict.fromkeys(r["key"] for r in reversed(mistake_rows()) if r.get("key")))
+        if args[0] not in SOURCES or len(args) != 3 or not KEY.fullmatch(args[1]) or not args[2].strip():
+            sys.exit("job.py slip %s <key> \"<무엇을 잘못했나>\". key 는 같은 실수끼리 묶는 이름(영문 소문자, 숫자, -)이고, "
+                     "같은 실수의 key 가 있으면 그것을 쓴다. 병합 훅·승인 창 훅·stop 은 스스로 남긴다\n있는 key: %s"
+                     % ("|".join(SOURCES), ", ".join(keys[:30]) or "없음"))
+        source, key, what = args
+        written = add_mistake(cwd, state, source, what, key)
+        state.setdefault("slips", []).append({"source": source, "key": key, "what": what, **where(cwd)})
+        nth = sum(1 for r in mistake_rows() if r.get("key") == key) if written else 0
+        said = "%s(%s, key %s%s): %s" % ("실수 기록에 남겼다" if written else NOT_WRITTEN, source, key,
+                                       ", 이 key 의 %d번째" % nth if nth else "", brief(what))
     elif cmd == "pr":
         state["pr"] = args[0]
+        fill_pr(cwd, state)
         said = "PR 을 기록했다: " + args[0]
     elif cmd == "merged":
         state["merged"] = {"commit": args[0], "ci": args[1] if len(args) > 1 else ""}
@@ -676,7 +798,7 @@ def main(argv):
     print(said)
     left = open_questions(state)
     if left:  # 기록 명령만 부르다 보고에서 빠뜨리지 않게, 답 없는 질문이 있다는 것은 늘 알린다
-        print("답을 받지 못한 질문 %d개(%s번)가 있다. 보고 맨 위에 번호째 다시 적는다(글은 job.py show)"
+        print("답을 받지 못한 질문 %d개(%s번)가 있다. 보고의 첫 줄인 기록 주소 다음에 번호째 다시 적는다(글은 job.py show)"
               % (len(left), ", ".join(str(q["id"]) for q in left)))
 
 

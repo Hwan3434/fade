@@ -545,7 +545,7 @@ class JobTest(unittest.TestCase):
         self.start()
         for source, what in (("review", "빈 목록에서 첫 원소를 읽었다"), ("ci", "3.12 에 없는 문법을 썼다"),
                              ("user", "PR 본문에 #3 을 썼다")):
-            r = job(self.cwd, "slip", source, what, env=env)
+            r = job(self.cwd, "slip", source, "k", what, env=env)
             self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual([(m["source"], m["what"]) for m in mistakes(path)],
                          [("review", "빈 목록에서 첫 원소를 읽었다"), ("ci", "3.12 에 없는 문법을 썼다"),
@@ -554,7 +554,8 @@ class JobTest(unittest.TestCase):
     def test_slip_은_훅이_직접_쓰는_출처와_빈_내용을_받지_않는다(self):
         path, env = self.own_log()
         self.start()
-        for args in (("gate", "x"), ("permission", "x"), ("stop", "x"), ("deploy", "x"), ("review",), ("review", " ")):
+        for args in (("gate", "k", "x"), ("permission", "k", "x"), ("stop", "k", "x"), ("deploy", "k", "x"), ("review",),
+                     ("review", "k"), ("review", "k", " ")):
             self.assertNotEqual(job(self.cwd, "slip", *args, env=env).returncode, 0, args)
         self.assertEqual(mistakes(path), [])
 
@@ -564,7 +565,7 @@ class JobTest(unittest.TestCase):
         wt = os.path.join(self.cwd, "wt")
         subprocess.run(["git", "worktree", "add", "-q", "-b", "feat/x", wt], cwd=self.cwd, check=True)
         self.assertEqual(job(wt, "start", "작업").returncode, 0)
-        self.assertEqual(job(wt, "slip", "user", "지적", env=env).returncode, 0)
+        self.assertEqual(job(wt, "slip", "user", "k", "지적", env=env).returncode, 0)
         row = mistakes(path)[0]
         self.assertEqual(os.path.realpath(row["repo"]), os.path.realpath(self.cwd))
         self.assertEqual(row["branch"], "feat/x")
@@ -572,8 +573,8 @@ class JobTest(unittest.TestCase):
     def test_mark_는_그_줄의_key_와_처리만_바꾼다(self):
         path, env = self.own_log()
         self.start()
-        job(self.cwd, "slip", "ci", "CI 가 끝나기 전에 병합했다", env=env)
-        job(self.cwd, "slip", "user", "브랜치 이름 규칙을 어겼다", env=env)
+        job(self.cwd, "slip", "ci", "ci-early-merge", "CI 가 끝나기 전에 병합했다", env=env)
+        job(self.cwd, "slip", "user", "branch-rule", "브랜치 이름 규칙을 어겼다", env=env)
         outside = tempfile.TemporaryDirectory()  # git 레포가 아닌 곳(리드의 상위 폴더)에서도 돈다
         self.addCleanup(outside.cleanup)
         r = job(outside.name, "mark", "2", "key", "branch-name", env=env)
@@ -581,14 +582,14 @@ class JobTest(unittest.TestCase):
         self.assertEqual(job(outside.name, "mark", "2", "handled", "처리됨(사용자 settings 의 브랜치 이름 훅)",
                              env=env).returncode, 0)
         first, second = mistakes(path)
-        self.assertEqual((first["key"], first["handled"]), ("", ""))
+        self.assertEqual((first["key"], first["handled"]), ("ci-early-merge", ""))
         self.assertEqual((second["key"], second["handled"]), ("branch-name", "처리됨(사용자 settings 의 브랜치 이름 훅)"))
         self.assertEqual(second["what"], "브랜치 이름 규칙을 어겼다")
 
     def test_mark_는_없는_줄과_없는_칸을_거부한다(self):
         path, env = self.own_log()
         self.start()
-        job(self.cwd, "slip", "user", "지적", env=env)
+        job(self.cwd, "slip", "user", "k", "지적", env=env)
         for args in (("3", "key", "x"), ("0", "key", "x"), ("일", "key", "x"), ("1", "what", "바꿈"), ("1", "key")):
             self.assertNotEqual(job(self.cwd, "mark", *args, env=env).returncode, 0, args)
         self.assertEqual(mistakes(path)[0]["what"], "지적")

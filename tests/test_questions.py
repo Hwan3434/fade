@@ -25,7 +25,7 @@ class QuestionTest(unittest.TestCase):
         self.assertEqual(job(self.cwd, "ask", "배포도 할까").returncode, 0)
         out = self.show()
         self.assertEqual(out[0], "상태: 진행 중")
-        self.assertEqual(out[1:4], ["답을 받지 못한 질문 (보고 맨 위에 번호째 다시 적는다):",
+        self.assertEqual(out[1:4], ["답을 받지 못한 질문 (보고의 첫 줄인 기록 주소 다음에 번호째 다시 적는다):",
                                     "1. A 와 B 중 무엇으로 할까", "2. 배포도 할까"])
 
     def test_답을_받은_질문은_첫머리에서_빠지고_기록에_남는다(self):
@@ -34,7 +34,7 @@ class QuestionTest(unittest.TestCase):
         r = job(self.cwd, "answered", "1", "A")
         self.assertEqual(r.returncode, 0, r.stderr)
         out = self.show()
-        self.assertEqual(out[1:3], ["답을 받지 못한 질문 (보고 맨 위에 번호째 다시 적는다):", "2. 배포도 할까"])
+        self.assertEqual(out[1:3], ["답을 받지 못한 질문 (보고의 첫 줄인 기록 주소 다음에 번호째 다시 적는다):", "2. 배포도 할까"])
         self.assertIn("- 물은 것: 1. A 와 B 중 무엇으로 할까 → A", out)
 
     def test_모두_답하면_첫머리에_질문이_없다(self):
