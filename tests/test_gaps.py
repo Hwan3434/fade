@@ -108,6 +108,8 @@ class GitMergeTest(Repo):
     def test_해석하지_못하는_명령의_병합도_세션_폴더의_기록으로_막는다(self):
         self.denied("gh pr merge 3 --squash && echo $'it\\'s'", self.wt)
         self.assertIsNone(self.gate("echo $'it\\'s'", self.wt))  # 병합이 아닌 명령은 그대로 둔다
+        self.assertIsNone(self.gate("git commit -m $'it\\'s ready to push'", self.wt))  # 메시지 속 글자는 병합이 아니다
+        self.denied("git -C %s merge feat/x && echo $'it\\'s'" % self.main, self.wt)
 
     def test_작업_브랜치를_base_로_push_해도_본다(self):
         for command in ("git push origin feat/x:main", "git push origin HEAD:main", "git push origin HEAD:refs/heads/main"):
