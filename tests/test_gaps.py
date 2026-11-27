@@ -168,17 +168,24 @@ class TestFirstTest(unittest.TestCase):
         with open(os.path.join(self.cwd, name), "w") as f:
             f.write(text)
 
-    def test_구현이_이미_있는_채_찍은_red_는_green_을_받지_않는다(self):
-        self.write("impl.py", "x = 1\n")  # 구현을 먼저 했다
-        self.write("t.sh", "grep -q 'x = 1' impl.py && test -f ok\n")
+    def test_red_때의_내용_그대로_커밋만_하고_통과하면_받지_않는다(self):
+        self.write("impl.py", "x = 1\n")  # 구현을 먼저 했고
+        self.write("t.sh", "grep -q 'x = 1' impl.py && test -f .git/flag\n")
         self.assertEqual(job(self.cwd, "red", "sh t.sh").returncode, 0)
-        self.write("t.sh", "grep -q 'x = 1' impl.py\n")  # 테스트만 고쳐 통과시킨다
         subprocess.run(["git", "add", "impl.py", "t.sh"], cwd=self.cwd, check=True)
-        subprocess.run(GIT + ["commit", "-q", "-m", "x"], cwd=self.cwd, check=True)
+        subprocess.run(GIT + ["commit", "-q", "-m", "x"], cwd=self.cwd, check=True)  # 내용은 그대로 커밋만 했다
+        open(os.path.join(job_dir(self.cwd), "flag"), "w").close()
         r = job(self.cwd, "green")
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("red 뒤에", r.stderr)
-        self.assertIn("impl.py", r.stderr)
+
+    def test_테스트와_구현이_한_파일이어도_red_뒤에_더_바뀌면_받는다(self):
+        # Rust 의 #[cfg(test)] 처럼 테스트와 구현이 한 파일에 있거나, 빈 틀을 둔 채 red 를 찍은 경우
+        self.write("impl.py", "x = 0\nassert x == 1\n")
+        self.assertEqual(job(self.cwd, "red", "python3 impl.py").returncode, 0)
+        self.write("impl.py", "x = 1\nassert x == 1\n")
+        r = job(self.cwd, "green")
+        self.assertEqual(r.returncode, 0, r.stderr)
 
     def test_아무것도_바꾸지_않고_통과하면_받지_않는다(self):
         self.assertEqual(job(self.cwd, "red", "test -f .git/flag").returncode, 0)
