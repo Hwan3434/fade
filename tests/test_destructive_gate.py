@@ -107,9 +107,10 @@ class DestructiveGateTest(unittest.TestCase):
             self.assertAllowed(command)
 
     def test_삭제_훅은_병합_훅과_같은_명령_해석을_쓴다(self):
-        src = open(DESTRUCTIVE, encoding="utf-8").read()
-        self.assertIn("merge_gate.located(", src)
-        self.assertNotIn('name == "cd"', src)  # cd 를 따로 해석하면 두 훅이 다시 어긋난다
+        with open(DESTRUCTIVE, encoding="utf-8") as f:
+            src = f.read()
+        self.assertTrue("merge_gate.located(" in src)
+        self.assertFalse('name == "cd"' in src)  # cd 를 따로 해석하면 두 훅이 다시 어긋난다
 
     def test_끝_이름의_글롭은_그_폴더_안_전부로_본다(self):
         self.assertBlocked("rm -rf ~/.*")

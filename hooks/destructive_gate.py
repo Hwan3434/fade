@@ -14,7 +14,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import merge_gate  # noqa: E402
 
 SAFE_DEVICES = {"/dev/null", "/dev/stdout", "/dev/stderr"}
-GIT_VALUE_OPTIONS, PUSH_VALUE_OPTIONS, WRAPPERS = merge_gate.GIT_VALUE_OPTIONS, merge_gate.PUSH_VALUE_OPTIONS, merge_gate.WRAPPERS
+UNKNOWN = "/<알 수 없는 폴더>/x"  # 폴더를 알 수 없을 때 상대 경로를 풀어 볼 자리
+PUSH_VALUE_OPTIONS = merge_gate.PUSH_VALUE_OPTIONS
 git_out = merge_gate.git_out
 
 
@@ -52,7 +53,11 @@ def rm_problem(args, cwd, home):
             operands.append(a)
     if not recursive:
         return None  # 재귀가 없으면 rm 은 폴더를 지우지 않는다
-    hits = [a for a in operands if wipes_home(resolve(a, cwd, home), home)]
+    if cwd is None:  # 폴더를 알 수 없다: 그 폴더째나 그 위를 지우는 상대 경로는 홈일 수 있다
+        hits = [a for a in operands if wipes_home(resolve(a, UNKNOWN, home), home) or
+                wipes_home(resolve(a, UNKNOWN, home), UNKNOWN)]
+    else:
+        hits = [a for a in operands if wipes_home(resolve(a, cwd, home), home)]
     return "%s 의 재귀 삭제" % hits[0] if hits else None
 
 
@@ -66,13 +71,9 @@ def destination(refspec, cwd):
 
 def push_problem(args, cwd):
     """`git` 뒤의 인자에서 기본 브랜치로 가는 force push 를 찾는다. force 일 때만 로컬 git 을 부른다."""
-    args = list(args)
+    args = list(args)  # git -C 와 값이 붙는 git 옵션은 located 가 이미 뗐다
     while args and args[0].startswith("-"):
-        a = args.pop(0)
-        if a in GIT_VALUE_OPTIONS and args:
-            value = args.pop(0)
-            if a == "-C":
-                cwd = os.path.join(cwd, os.path.expanduser(value))
+        args.pop(0)
     if not args or args[0] != "push":
         return None
     force, every, positional, rest = False, False, [], args[1:]
@@ -111,22 +112,17 @@ def push_problem(args, cwd):
 
 
 def problem(command, cwd, home):
-    """막을 명령이면 (무엇, 그 조각), 아니면 None. 같은 명령 줄 안의 cd 는 따라가 상대 경로를 푼다."""
-    for seg in merge_gate.segments(command):
-        while seg and (seg[0] in WRAPPERS or ("=" in seg[0] and not seg[0].startswith("-"))):
-            seg = seg[1:]  # 셸 예약어, 명령을 감싸는 명령, 그 뒤의 환경 변수 지정
-        if not seg:
-            continue
+    """막을 명령이면 (무엇, 그 조각), 아니면 None. 명령 해석(cd 따라가기, git -C, 리다이렉트 떼기)은 병합 훅의
+    located 를 그대로 쓴다. 폴더를 알 수 없는 조각(셸 변수, 없는 폴더로의 cd 뒤)의 상대 경로는 그 폴더째나 그 위를
+    지우는 것(`.`, `*`, `..`)이면 막는다. 비어 있는 셸 변수로 cd 하면 홈으로 가고, 없는 폴더로의 cd 가 실패하면
+    `;` 뒤의 rm 은 앞 폴더에서 돌아, 그 폴더가 홈일 수 있어서다."""
+    for here, seg in merge_gate.located(command, cwd):
         name, args = os.path.basename(seg[0]), seg[1:]
         found = None
-        if name == "cd":
-            target = args[-1] if args else "~"
-            if target != "-":
-                cwd = resolve(target, cwd, home)
-        elif name == "rm":
-            found = rm_problem(args, cwd, home)
+        if name == "rm":
+            found = rm_problem(args, here, home)
         elif name == "git":
-            found = push_problem(args, cwd)
+            found = push_problem(args, here or cwd)
         elif name == "dd":
             found = next(("장치 %s 에 쓰는 dd" % a[3:] for a in args
                           if a.startswith("of=/dev/") and a[3:] not in SAFE_DEVICES), None)

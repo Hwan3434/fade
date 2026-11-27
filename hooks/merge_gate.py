@@ -138,7 +138,12 @@ def without_redirects(seg):
 
 
 def folder(base, value):
-    """cd 나 git -C 의 값으로 간 폴더. 셸 변수처럼 펼칠 수 없거나 없는 폴더면 None(알 수 없음)이다."""
+    """cd 나 git -C 의 값으로 간 폴더. 셸 변수처럼 펼칠 수 없거나 없는 폴더면 None(알 수 없음)이다.
+    `$HOME`, `${HOME}` 은 홈으로 펼친다."""
+    for var in ("${HOME}", "$HOME"):
+        if value == var or value.startswith(var + "/"):
+            value = "~" + value[len(var):]
+            break
     if "$" in value or "`" in value or (base is None and not os.path.isabs(os.path.expanduser(value))):
         return None
     path = os.path.normpath(os.path.join(base or "/", os.path.expanduser(value)))
