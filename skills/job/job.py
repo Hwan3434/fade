@@ -40,6 +40,11 @@ FADE_MISTAKES 를 정하지 않은 동안 쓰지 않는다. PR 을 기록하면 
   job.py drop    <완료 기준> | --tried    그 기준에 붙인 증거를, --tried 면 써 보기를 모두 지운다
   job.py try-na  <이유>                  써 볼 화면도 명령도 없는 작업일 때
   job.py human   <사람이 볼 것>           사람만 판정할 수 있는 것이 남았을 때. 직접 써 보기를 대신하고, 병합을 막는다
+  job.py human-done <번호> <누가 무엇을 근거로 풀었나> [<근거 파일>...]
+                                         사람(또는 사람이 맡긴 리드)이 확인한 뒤 그 사람이 볼 것을 푼다. 번호는 show 의 번호다.
+                                         사람 없는 작업을 돈 세션은 스스로 풀지 못한다(fade 훅 lead_gate 가 막는다)
+  job.py contrasted <대조 결과>          리드가 워커의 기록을 완료 기준과 대조한 결과. 리드가 워커의 워크트리에서 남긴다
+  job.py hardened <hardener 결과>        리드가 hardener 를 돌린 결과. 병합된 워커의 워크트리는 이 둘이 있어야 지운다
   job.py review-files <base>             버그 축이 볼 bug.patch(앞 리뷰가 없으면 base 와의 전체, 있으면 그 리뷰의
                                          커밋 뒤)를 쓰고, 명세 리뷰어를 띄울지 판단할 재료를 알린다. 첫 줄은 base 와의 diff 의 파일 수와 줄 수
                                          (더한 줄 + 뺀 줄), 셋째 줄부터는 파일마다 더한 줄, 뺀 줄, 경로다. 명세 리뷰어에게 줄 show
@@ -503,8 +508,10 @@ def missing(state, cwd):
         out.append("리뷰: 마지막 커밋(%s)에서 커밋 전 변경 없이 다시 하지 않았다" % s)
     elif review["left"]:
         out.append("리뷰: 남은 막는 지적 %d개" % review["left"])
-    for h in state["human"]:
-        out.append("사람이 볼 것: " + h)
+    done = state.get("human_done") or {}
+    for n, h in enumerate(state["human"], 1):
+        if str(n) not in done:
+            out.append("사람이 볼 것 %d: %s. 사람이 확인한 뒤 job.py human-done %d \"<누가 무엇을 근거로>\" 로 푼다" % (n, h, n))
     return out
 
 
@@ -579,8 +586,11 @@ def show(state, cwd, full=False):
             lines += file_lines(t["files"]) if full else []
     if state["try_na"]:
         lines.append("- 직접 써 보기: 해당 없음 — " + state["try_na"])
-    for h in state["human"]:
-        lines.append("- 사람이 볼 것: " + h)
+    done = state.get("human_done") or {}
+    for n, h in enumerate(state["human"], 1):
+        d = done.get(str(n))
+        lines.append("- 사람이 볼 것 %d: %s%s" % (n, h, " → 풀림(커밋 %s): %s" % (at(d), d["by"]) if d else ""))
+        lines += file_lines(d["files"]) if d and full else []
     door = state.get("door")
     if door:
         lines.append("- 되돌릴 수 있는가: %s — %s" % ("한쪽 문" if door["kind"] == "one-way" else "양쪽 문", door["why"]))
@@ -596,6 +606,9 @@ def show(state, cwd, full=False):
             " — " + review["note"] if review["note"] else ""))
     if state["pr"]:
         lines.append("- PR: " + state["pr"])
+    for key, label in (("contrasted", "리드의 대조"), ("hardened", "hardener")):
+        if state.get(key):
+            lines.append("- %s(커밋 %s): %s" % (label, at(state[key]), state[key]["note"]))
     if state["merged"]:
         lines.append("- 병합: " + state["merged"]["commit"] + (" · " + state["merged"]["ci"] if state["merged"]["ci"] else ""))
     return mask("\n".join(lines))
@@ -805,6 +818,7 @@ def main(argv):
     if state is None:
         sys.exit("작업 기록이 없다. job.py start 부터 한다")
     need = {"scope": 1, "red": 1, "no-test": 1, "evidence": 2, "log": 2, "tried": 1, "try-na": 1, "human": 1,
+            "human-done": 2, "contrasted": 1, "hardened": 1,
             "review": 1, "review-files": 1, "door": 2, "ask": 1, "answered": 2, "stop": 1, "slip": 1, "pr": 1, "merged": 1}
     if len(args) < need.get(cmd, 0):
         sys.exit(usage(cmd))
@@ -897,6 +911,19 @@ def main(argv):
     elif cmd == "human":
         state["human"].append(args[0])
         said = "사람이 볼 것을 기록했다: %s. 남아 있으면 병합하지 않는다" % brief(args[0])
+    elif cmd == "human-done":
+        if not args[0].isdigit() or not 1 <= int(args[0]) <= len(state["human"]):
+            sys.exit("기록에 없는 사람이 볼 것의 번호다: %s (%d개)" % (args[0], len(state["human"])))
+        if not args[1].strip():
+            sys.exit("누가 무엇을 근거로 풀었는지가 비었다\n" + usage("human-done"))
+        files = need_files(cwd, args[2:]) if args[2:] else []
+        state.setdefault("human_done", {})[args[0]] = {"by": args[1], "files": files, "at": time.time(), **where(cwd)}
+        said = "사람이 볼 것 %s번을 풀었다: %s" % (args[0], brief(args[1]))
+    elif cmd in ("contrasted", "hardened"):
+        if not args[0].strip():
+            sys.exit("결과가 비었다\n" + usage(cmd))
+        state[cmd] = {"note": args[0], "at": time.time(), **where(cwd)}
+        said = "%s 를 기록했다: %s" % ("리드의 대조" if cmd == "contrasted" else "hardener 결과", brief(args[0]))
     elif cmd == "review":
         if not args[0].isdigit():
             sys.exit("남은 막는 지적 수는 0 이상의 정수다")

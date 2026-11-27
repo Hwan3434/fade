@@ -170,6 +170,15 @@ class RecordTest(Base):
         self.assertNotEqual(job(self.wt, "human-done", "1", " ").returncode, 0)
         self.assertNotEqual(job(self.wt, "contrasted", " ").returncode, 0)
 
+    def test_dispatch_와_job_글이_리드의_기록과_PR_까지만_작업의_병합_길을_말한다(self):
+        with open(os.path.join(ROOT, "skills", "dispatch", "SKILL.md"), encoding="utf-8") as f:
+            done = f.read().split("## 4. 완료 판단", 1)[1]
+        for word in ("job.py contrasted", "job.py hardened", "job.py human-done", "job.py scope merge", "job.py tried",
+                     "훅을 돌아가지 않는다"):
+            self.assertIn(word, done, word)
+        with open(os.path.join(ROOT, "skills", "job", "SKILL.md"), encoding="utf-8") as f:
+            self.assertIn("human-done", f.read())
+
     def test_훅이_등록되어_있다(self):
         with open(os.path.join(ROOT, "hooks", "hooks.json"), encoding="utf-8") as f:
             self.assertIn("lead_gate.py", f.read())
