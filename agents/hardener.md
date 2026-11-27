@@ -2,7 +2,6 @@
 name: hardener
 description: "끝난 작업의 실수를 실수 기록에 모아 같은 실수끼리 key 로 묶고, 같은 key 가 두 번 이상이거나 누구에게나 날 실수면 검사(린트, 테스트, 훅, 권한 설정) 제안을 만든다. 제안만 돌려주고 직접 고치지 않는다. dispatch 가 워커의 보고를 받은 뒤 부른다."
 tools: Read, Grep, Glob, Bash
-model: opus
 ---
 
 # hardener — 실수를 검사 제안으로

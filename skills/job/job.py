@@ -41,6 +41,8 @@ stop 과 slip, 그리고 병합 훅과 승인 창 훅이 막을 때 한 줄씩 �
                                          버그 축으로 본 리뷰다. 앞 리뷰가 막는 지적 0 이고 그 뒤의 커밋이 하나일 때만 받는다
   job.py door    one-way|two-way <이유와 영향 범위>
                                          되돌릴 수 있는가. 기록이 없거나 one-way(한쪽 문)면 병합을 막는다
+  job.py ask     <질문>                  사용자에게 물은 것을 남긴다. 답을 적기 전까지 show 의 상태 줄 바로 아래에 번호째 나온다
+  job.py answered <번호> <답>            사용자에게 받은 답을 적는다
   job.py stop    <이유>                  해결하지 못했거나 사용자 결정이 필요해 멈춘다. 병합을 막고 실수 기록에 남긴다
   job.py slip    review|ci|user <무엇을 잘못했나>
                                          리뷰에서 고친 막는 지적, CI 실패, 사용자 지적을 실수 기록에 남긴다
@@ -345,8 +347,16 @@ def detail(record):
 
 
 def show(state, cwd, full=False):
-    lines = ["상태: " + status(state), "", "## 작업 기록 (fade job)", "", "- 작업: " + state["title"],
-             "- 범위: " + ("PR 까지" if state["scope"] == "pr" else "병합까지")]
+    questions = state.get("questions", [])  # start 가 이 칸을 넣기 전에 시작한 기록에는 없다
+    open_ = ["%d. %s" % (q["id"], q["question"]) for q in questions if q["answer"] is None]
+    lines = ["상태: " + status(state)]
+    if open_:
+        lines += ["답을 받지 못한 질문 (보고 맨 위에 번호째 다시 적는다):"] + open_
+    lines += ["", "## 작업 기록 (fade job)", "", "- 작업: " + state["title"],
+              "- 범위: " + ("PR 까지" if state["scope"] == "pr" else "병합까지")]
+    for q in questions:
+        if q["answer"] is not None:
+            lines.append("- 물은 것: %d. %s → %s" % (q["id"], q["question"], q["answer"]))
     if state.get("unattended"):
         lines.append("- 사람 없음: 승인 창이 뜨면 기다리지 않고 거부된다")
     if state.get("stopped"):
@@ -473,14 +483,14 @@ def main(argv):
         state = {"title": args[0], "scope": "pr" if "--pr-only" in options else "merge", "started": time.time(),
                  "branch": branch(cwd), "unattended": "--unattended" in options,
                  "red": None, "green": None, "no_test": None, "evidence": [], "tried": [], "try_na": None,
-                 "human": [], "review": None, "door": None, "stopped": None, "pr": None, "merged": None}
+                 "human": [], "questions": [], "review": None, "door": None, "stopped": None, "pr": None, "merged": None}
         save(cwd, state)
         print(show(state, cwd))
         return
     if state is None:
         sys.exit("작업 기록이 없다. job.py start 부터 한다")
     need = {"scope": 1, "red": 1, "no-test": 1, "evidence": 2, "log": 2, "tried": 1, "try-na": 1, "human": 1,
-            "review": 1, "review-files": 1, "door": 2, "stop": 1, "slip": 2, "pr": 1, "merged": 1}
+            "review": 1, "review-files": 1, "door": 2, "ask": 1, "answered": 2, "stop": 1, "slip": 2, "pr": 1, "merged": 1}
     if len(args) < need.get(cmd, 0):
         sys.exit(usage(cmd))
     if cmd == "scope":
@@ -563,6 +573,18 @@ def main(argv):
         if args[0] not in ("one-way", "two-way") or not args[1].strip():
             sys.exit("job.py door one-way|two-way \"<이유와 영향 범위>\"")
         state["door"] = {"kind": args[0], "why": args[1]}
+    elif cmd == "ask":
+        if not args[0].strip():
+            sys.exit("질문이 비었다\n" + usage("ask"))
+        questions = state.setdefault("questions", [])
+        questions.append({"id": len(questions) + 1, "question": args[0], "answer": None})
+    elif cmd == "answered":
+        questions = state.get("questions", [])
+        if not args[0].isdigit() or not 1 <= int(args[0]) <= len(questions):
+            sys.exit("기록에 없는 질문 번호다: %s (%d개)" % (args[0], len(questions)))
+        if not args[1].strip():
+            sys.exit("답이 비었다\n" + usage("answered"))
+        questions[int(args[0]) - 1]["answer"] = args[1]
     elif cmd == "stop":
         state["stopped"] = args[0]
         save(cwd, state)

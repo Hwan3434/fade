@@ -51,7 +51,7 @@ class NonstopTest(unittest.TestCase):
         self.run_cmd("set", "s1", "2", "hold", "질문")
         self.run_cmd("decide", "s1", "3", "권장안으로 정함")
         r = self.run_cmd("show", "s1")
-        self.assertIn("PR 1개 · 변경 없이 끝남 0개 · 보류 1개 · 막힘 0개 · 남음 1개", r.stdout)
+        self.assertIn("PR 1개 · PR 없이 끝남 0개 · 보류 1개 · 막힘 0개 · 남음 1개", r.stdout)
         self.assertIn("## 권장안으로 정한 것", r.stdout)
         self.assertIn("남은 작업 1개 — 다음: 3. 다", r.stdout)
 
