@@ -85,8 +85,15 @@ class GateTest(unittest.TestCase):
         self.assertEqual(out["permissionDecision"], "deny")
         return out["permissionDecisionReason"]
 
-    def read_patch(self, path=None, **extra):
-        self.t.tool("Read", dict({"file_path": self.patch}, **extra), path=path)
+    def read_patch(self, path=None, shown=None, **extra):
+        """Read 도구처럼 줄 번호를 붙인 결과를 남긴다. shown 은 실제로 돌려준 줄 범위다(토큰 한도로 잘리면 앞부분만 온다)."""
+        with open(self.patch, encoding="utf-8") as f:
+            lines = f.read().splitlines()
+        start = extra.get("offset", 1)
+        end = min(len(lines), start - 1 + extra.get("limit", 2000))
+        first, last = shown or (start, end)
+        result = "\n".join("%6d\t%s" % (i, lines[i - 1]) for i in range(first, last + 1))
+        self.t.tool("Read", dict({"file_path": self.patch}, **extra), result=result, path=path)
 
     def test_review_files_가_버그_축의_patch_를_쓴다(self):
         with open(self.patch, encoding="utf-8") as f:
@@ -109,6 +116,15 @@ class GateTest(unittest.TestCase):
         self.read_patch()
         self.denied()
         self.read_patch(offset=2001, limit=2000)
+        self.assertIsNone(self.gate())
+
+    def test_토큰_한도로_앞부분만_돌아온_Read_는_끝까지_읽은_것이_아니다(self):
+        with open(self.patch, "a") as f:
+            f.write("".join("+%d\n" % i for i in range(300)))
+        self.t.prompt(MARKER)
+        self.read_patch(shown=(1, 259))  # limit 없이 읽었는데 앞 259줄만 왔다(PARTIAL view)
+        self.denied()
+        self.read_patch(offset=260, limit=259)
         self.assertIsNone(self.gate())
 
     def test_읽기가_실패했으면_치지_않는다(self):
@@ -221,7 +237,8 @@ class DropTest(unittest.TestCase):
 
     def test_slip_이_있으면_받는다(self):
         job(self.cwd, "slip", "review", "k", "고침", env=self.env)
-        self.assertEqual(self.review("0", "고쳤다").returncode, 0, self.review("0", "고쳤다").stderr)
+        r = self.review("0", "고쳤다")
+        self.assertEqual(r.returncode, 0, r.stderr)
 
     def test_새_red_가_있으면_받는다(self):
         self.assertEqual(job(self.cwd, "red", "false").returncode, 0)
