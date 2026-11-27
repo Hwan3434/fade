@@ -132,21 +132,44 @@ class GateTest(unittest.TestCase):
         self.t.tool("Read", {"file_path": self.patch}, result="error", error=True)
         self.denied()
 
-    def test_첫_리뷰는_base_와의_전체_git_diff_도_받는다(self):
+    def patch_text(self):
+        with open(self.patch, encoding="utf-8") as f:
+            return f.read()
+
+    def test_cat_으로_bug_patch_전체를_읽어도_받는다(self):
+        # 실제 code-review 하위 에이전트는 bug.patch 를 Bash cat 으로 통째로 읽었다(PR 28 써 보기)
         self.t.prompt(MARKER)
-        self.t.tool("Bash", {"command": "git diff main...HEAD"}, result="diff --git a/a.py b/a.py")
+        self.t.tool("Bash", {"command": "cat %s" % self.patch}, result=self.patch_text())
         self.assertIsNone(self.gate())
 
-    def test_파일을_줄이거나_잘린_git_diff_는_치지_않는다(self):
+    def test_git_diff_출력에_diff_내용이_다_있으면_받는다(self):
         self.t.prompt(MARKER)
-        for command, result in (("git diff main...HEAD -- src", "x"), ("git diff --stat main...HEAD", "x"),
-                                ("git diff main...HEAD", "Output too large (31.2KB). Full output saved to: x\n<persisted-output>")):
-            self.t.tool("Bash", {"command": command}, result=result)
-        self.denied()
+        self.t.tool("Bash", {"command": "git diff main...HEAD"}, result=self.patch_text())
+        self.assertIsNone(self.gate())
 
-    def test_첫_리뷰는_범위가_base_와의_전체가_아니면_받지_않는다(self):
+    def test_나눠_읽은_출력을_합쳐_다_보였으면_받는다(self):
+        lines = self.patch_text().splitlines()
+        half = len(lines) // 2
         self.t.prompt(MARKER)
-        self.t.tool("Bash", {"command": "git diff HEAD~1..HEAD"}, result="diff")
+        self.t.tool("Bash", {"command": "sed -n 1,%dp bug.patch" % half}, result="\n".join(lines[:half]))
+        self.t.tool("Bash", {"command": "sed -n %d,\$p bug.patch" % (half + 1)}, result="\n".join(lines[half:]))
+        self.assertIsNone(self.gate())
+
+    def test_앞부분만_보인_출력은_읽은_것이_아니고_빠진_줄을_알린다(self):
+        with open(self.patch, "a") as f:
+            f.write("".join("+줄 %d\n" % i for i in range(100)))
+        lines = self.patch_text().splitlines()
+        self.t.prompt(MARKER)
+        self.t.tool("Bash", {"command": "head -40 bug.patch"}, result="\n".join(lines[:40]))
+        self.t.tool("Bash", {"command": "git diff main...HEAD"},
+                    result="Output too large (31.2KB). Full output saved to: x\n<persisted-output>\n" + "\n".join(lines[:20]))
+        reason = self.denied()
+        self.assertIn("41", reason)  # 41번 줄부터 보이지 않았다
+        self.assertIn(str(len(lines)), reason)
+
+    def test_다른_파일의_diff_는_치지_않는다(self):
+        self.t.prompt(MARKER)
+        self.t.tool("Bash", {"command": "git diff HEAD~1..HEAD -- other.py"}, result="diff --git a/other.py b/other.py\n+x")
         self.denied()
 
     def test_diff_를_읽은_것이_code_review_보다_앞이면_치지_않는다(self):
@@ -163,7 +186,7 @@ class GateTest(unittest.TestCase):
         self.t.tool("Skill", {"skill": "code-review", "args": "medium"})
         sub = self.t.subagent("bug")
         self.t.prompt(MARKER, path=sub)
-        self.t.tool("Bash", {"command": "git diff main...feat/x && git ls-files"}, result="diff", path=sub)
+        self.t.tool("Bash", {"command": "git diff main...feat/x && git ls-files"}, result=self.patch_text() + "\na.py", path=sub)
         self.assertIsNone(self.gate())
 
     def test_받은_리뷰보다_앞의_읽기는_다음_리뷰의_증거가_아니다(self):
@@ -175,7 +198,7 @@ class GateTest(unittest.TestCase):
         job(self.cwd, "review-files", "main")
         self.denied()
         self.t.prompt(MARKER)
-        self.t.tool("Bash", {"command": "git diff HEAD~1..HEAD"}, result="diff")  # 다시 하는 리뷰는 고친 부분만 봐도 된다
+        self.t.tool("Bash", {"command": "git diff HEAD~1..HEAD"}, result=self.patch_text())  # 다시 하는 리뷰는 고친 부분만 봐도 된다
         self.assertIsNone(self.gate())
 
     def test_bug_patch_가_이_커밋에서_만든_것이_아니면_받지_않는다(self):
@@ -189,22 +212,46 @@ class GateTest(unittest.TestCase):
         self.assertIsNone(self.gate("job.py review-files main"))
         self.assertIsNone(self.gate("job.py show"))
 
-    def test_기록_경로가_없으면_판정하지_않는다(self):
-        payload = {"hook_event_name": "PreToolUse", "tool_name": "Bash", "cwd": self.cwd,
-                   "tool_input": {"command": "job.py review 0 \"x\""}}
+    def raw(self, payload):
         r = subprocess.run([sys.executable, REVIEW_GATE], input=json.dumps(payload), capture_output=True, text=True)
-        self.assertEqual(r.stdout.strip(), "")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return json.loads(r.stdout) if r.stdout.strip() else {}
 
-    def test_임시_폴더의_레포는_판정하지_않는다(self):
+    def passed_with_note(self, payload, word):
+        """판정할 수 없으면 막지 않되, 그 사실과 이유가 에이전트와 사용자에게 보인다."""
+        out = self.raw(payload)
+        self.assertNotIn("permissionDecision", out.get("hookSpecificOutput", {}))
+        self.assertIn(word, out.get("hookSpecificOutput", {}).get("additionalContext", ""))
+        self.assertIn(word, out.get("systemMessage", ""))
+
+    def test_기록_경로가_없으면_막지_않되_판정하지_못했다고_알린다(self):
+        self.passed_with_note({"hook_event_name": "PreToolUse", "tool_name": "Bash", "cwd": self.cwd,
+                               "tool_input": {"command": "job.py review 0 \"x\""}}, "세션 기록")
+
+    def test_bug_patch_가_없으면_막지_않되_판이_다를_수_있다고_알린다(self):
+        os.remove(self.patch)  # PATH 의 다른 판 job.py 가 review-files 를 돌리면 bug.patch 가 없다
+        self.passed_with_note({"hook_event_name": "PreToolUse", "tool_name": "Bash", "cwd": self.cwd,
+                               "transcript_path": self.t.path, "tool_input": {"command": "job.py review 0 \"x\""}},
+                              "bug.patch")
+
+    def test_훅이_죽어도_막지_않되_죽었다고_알린다(self):
+        with open(self.t.path, "w") as f:
+            f.write("{}\n")
+        os.chmod(self.t.path, 0)  # 세션 기록을 읽지 못한다
+        self.addCleanup(os.chmod, self.t.path, 0o644)
+        self.passed_with_note({"hook_event_name": "PreToolUse", "tool_name": "Bash", "cwd": self.cwd,
+                               "transcript_path": self.t.path, "tool_input": {"command": "job.py review 0 \"x\""}},
+                              "판정하지 못했다")
+
+    def test_임시_폴더의_레포는_막지_않되_판정하지_않았다고_알린다(self):
         d = tempfile.TemporaryDirectory()
         self.addCleanup(d.cleanup)
         subprocess.run(["git", "init", "-q", d.name], check=True)
         commit_and_switch(d.name, "feat/x")
         job(d.name, "start", "작업")
-        payload = {"hook_event_name": "PreToolUse", "tool_name": "Bash", "cwd": d.name, "transcript_path": self.t.path,
-                   "tool_input": {"command": "job.py review 0 \"x\""}}
-        r = subprocess.run([sys.executable, REVIEW_GATE], input=json.dumps(payload), capture_output=True, text=True)
-        self.assertEqual(r.stdout.strip(), "")
+        self.passed_with_note({"hook_event_name": "PreToolUse", "tool_name": "Bash", "cwd": d.name,
+                               "transcript_path": self.t.path, "tool_input": {"command": "job.py review 0 \"x\""}},
+                              "임시 폴더")
 
     def test_훅이_등록되어_있다(self):
         with open(os.path.join(ROOT, "hooks", "hooks.json"), encoding="utf-8") as f:
