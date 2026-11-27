@@ -308,6 +308,10 @@ class DispatchConditionsTest(unittest.TestCase):
                      "스스로 깨어날 수 없으면", "한 대화를 두 곳에서", "도는 중인 워커에 기준을 더하는 메시지를 보내지 않는다"):
             self.assertIn(word, body, word)
 
+    def test_조건을_못_채우는_방법을_대신_권하지_않는다(self):
+        # 조건을 채울 방법이 없는 환경에서 리드가 「넘겨받는다」를 못 채우는 방법을 권하고 질문으로 끝냈다(PR 32 써 보기)
+        self.assertIn("조건을 못 채우는 방법을 대신 권하지 않는다", section(self.text, "2. 워커 띄우기"))
+
     def test_정리는_환경이_주는_방법으로_닫고_워크트리까지_지우는지_먼저_본다(self):
         cleanup = section(self.text, "정리")
         self.assertIn("환경이 주는 방법", cleanup)

@@ -136,6 +136,19 @@ class TempRepoTest(Base):
         self.assertEqual(ask["decision"]["behavior"], "deny")
         self.assertFalse(os.path.exists(self.default_log()))
 
+    def test_써_보기_세션은_임시_폴더_밖의_레포에서도_기본_실수_기록에_쓰지_않는다(self):
+        common = subprocess.run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], cwd=ROOT,
+                                capture_output=True, text=True).stdout.strip()
+        outside = tempfile.TemporaryDirectory(dir=common)
+        self.addCleanup(outside.cleanup)
+        subprocess.run(["git", "init", "-q", outside.name], check=True)
+        commit_and_switch(outside.name, "feat/x")
+        env = dict(self.no_log_env(), FADE_TRY_REPO=outside.name)
+        job(outside.name, "start", "작업", env=env)
+        r = job(outside.name, "slip", "user", "k", "써 보기의 지적", env=env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertFalse(os.path.exists(self.default_log()))
+
     def test_임시_폴더_밖의_레포는_기본_실수_기록에_쓴다(self):
         common = subprocess.run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], cwd=ROOT,
                                 capture_output=True, text=True).stdout.strip()

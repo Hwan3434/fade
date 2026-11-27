@@ -547,9 +547,16 @@ class ReviewFilesTest(unittest.TestCase):
         commit_and_switch(self.cwd, "feat/x")
         job(self.cwd, "start", "작업")
 
-    def files(self, attributes, **changes):
+    def files(self, attributes, branch_attributes=None, **changes):
+        """attributes 는 base(main)에 둔 표시, branch_attributes 는 이 브랜치가 더한 표시다."""
         if attributes is not None:
+            subprocess.run(["git", "switch", "-q", "main"], cwd=self.cwd, check=True)
             commit_file(self.cwd, ".gitattributes", attributes, "표시")
+            subprocess.run(["git", "switch", "-q", "feat/x"], cwd=self.cwd, check=True)
+            subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid", "merge", "-q", "--no-edit",
+                            "main"], cwd=self.cwd, check=True)
+        if branch_attributes is not None:
+            commit_file(self.cwd, ".gitattributes", branch_attributes, "브랜치의 표시")
         for name, text in changes.items():
             commit_file(self.cwd, name.replace("_", "."), text, name)
         r = job(self.cwd, "review-files", "main")
@@ -564,9 +571,22 @@ class ReviewFilesTest(unittest.TestCase):
         self.assertNotIn("b/gen.txt", bug)
         self.assertNotIn("b/gen.txt", spec)
         self.assertIn("b = 1", bug)
-        self.assertIn(".gitattributes", bug)  # 표시 자체는 리뷰에 남는다
         self.assertIn("3\t0\tgen.txt", out)
         self.assertIn("gen.txt(3줄, linguist-generated)", job(self.cwd, "show").stdout)
+
+    def test_이_브랜치가_더한_표시는_빼지_않고_그_사실을_알린다(self):
+        # 브랜치가 스스로 표시를 더해 자기 파일을 리뷰에서 빼지 못하게, base 의 .gitattributes 에 있는 표시만 본다
+        out, bug, spec = self.files(None, branch_attributes="gen.txt linguist-generated\n", gen_txt="1\n2\n")
+        self.assertIn("b/gen.txt", bug)
+        self.assertIn("b/gen.txt", spec)
+        self.assertIn("b/.gitattributes", bug)  # 표시의 변경 자체도 리뷰에 남는다
+        self.assertIn("이 브랜치가 .gitattributes 를 바꿨다", out)
+        self.assertNotIn("뺀 파일", out)
+
+    def test_base_의_표시를_이_브랜치가_지워도_base_의_표시로_뺀다(self):
+        out, bug, _ = self.files("gen_txt linguist-generated\n".replace("_", "."), branch_attributes="", gen_txt="1\n")
+        self.assertNotIn("b/gen.txt", bug)
+        self.assertIn("이 브랜치가 .gitattributes 를 바꿨다", out)
 
     def test_linguist_generated_true_도_빠지고_표시가_남는다(self):
         out, bug, _ = self.files("gen_txt linguist-generated=true\n".replace("_", "."), gen_txt="1\n")

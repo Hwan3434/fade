@@ -39,6 +39,26 @@ class JobTest(unittest.TestCase):
         subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-q",
                         "--allow-empty", "-m", "수정"], cwd=self.cwd, check=True)
 
+    def test_오래_도는_명령_동안_다른_job_py_가_남긴_기록을_덮어쓰지_않는다(self):
+        # log 와 red 는 명령을 돌린 뒤 저장한다. 그 사이 다른 job.py 가 남긴 증거가 사라지면 안 된다(PR 31 에서 두 번 사라짐)
+        self.start()
+        inner = '"%s" "%s" evidence "%s" "%s"' % (sys.executable, JOB, "도는 동안 남긴 증거", self.shot())
+        self.assertEqual(job(self.cwd, "log", "기준", inner).returncode, 0)
+        self.assertEqual(job(self.cwd, "red", inner.replace("도는 동안", "red 가 도는 동안") + " && false").returncode, 0)
+        criteria = [l.split(" (")[0] for l in job(self.cwd, "show").stdout.splitlines() if l.startswith("  - ")]
+        self.assertEqual(sorted(criteria), sorted(["  - 기준", "  - 도는 동안 남긴 증거", "  - red 가 도는 동안 남긴 증거"]))
+
+    def test_써_보기_세션은_써_볼_레포_밖의_작업_기록을_건드리지_않는다(self):
+        self.start()
+        other = tempfile.TemporaryDirectory()
+        self.addCleanup(other.cleanup)
+        env = dict(os.environ, FADE_TRY_REPO=other.name)
+        for args in (("human", "x"), ("review-files", "main"), ("show",)):
+            r = job(self.cwd, *args, env=env)
+            self.assertNotEqual(r.returncode, 0, args)
+            self.assertIn("써 보기", r.stderr)
+        self.assertEqual(job(self.cwd, "show", env=dict(os.environ, FADE_TRY_REPO=self.cwd)).returncode, 0)
+
     def test_시작하지_않으면_다른_명령을_받지_않는다(self):
         r = job(self.cwd, "red", "false")
         self.assertNotEqual(r.returncode, 0)
