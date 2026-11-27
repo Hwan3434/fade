@@ -21,7 +21,8 @@ WRAPPERS = {"sudo", "env", "command", "exec", "nohup", "time", "!", "{", "if", "
 
 
 def resolve(arg, cwd, home):
-    """인자를 셸이 펼칠 절대 경로로 바꾼다. 끝 이름이 글롭(`*`, `.*`, `id_*`)이면 그 폴더 안 전부로 보고 폴더를 돌려준다."""
+    """인자를 셸이 펼칠 절대 경로로 바꾼다. 끝 이름이 글자 없이 글롭뿐이면(`*`, `.*`, `.[!.]*`) 그 폴더 안 전부라
+    폴더를 돌려준다. `*.bak` 처럼 이름이 걸린 글롭은 폴더 전체가 아니다."""
     for var in ("${HOME}", "$HOME", "~"):
         if arg == var or arg.startswith(var + "/"):
             arg = home + arg[len(var):]
@@ -29,7 +30,9 @@ def resolve(arg, cwd, home):
     path = os.path.normpath(os.path.join(cwd, arg))
     if path.startswith("//"):
         path = "/" + path.lstrip("/")
-    return os.path.dirname(path) if any(ch in os.path.basename(path) for ch in "*?[") else path
+    base = os.path.basename(path)
+    whole = any(ch in base for ch in "*?[") and not any(ch.isalnum() for ch in base)
+    return os.path.dirname(path) if whole else path
 
 
 def wipes_home(path, home):
