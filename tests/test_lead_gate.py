@@ -76,6 +76,42 @@ class LeadOnlyTest(Base):
             self.assertIn("스스로", reason)
         self.assertIsNotNone(self.gate('job.py human-done 1 "봤다"', own, cwd=self.wt))
 
+    def test_사람_있는_작업이어도_dispatch_워커는_스스로_남기지_못한다(self):
+        self.start()
+        own = self.own(DISPATCHED.replace("사용자: 없음", "사용자: 있음"))
+        self.assertIsNotNone(self.gate('cd %s && job.py contrasted "맞음"' % self.wt, own))
+
+    def test_셸_변수로_가리킨_폴더의_start_도_이_세션의_시작으로_본다(self):
+        self.start("--unattended")
+        own = self.transcript(commands=['WT=%s; cd "$WT" && job.py start --unattended "작업"' % self.wt])
+        self.assertIsNotNone(self.gate('cd %s && job.py human-done 1 "봤다"' % self.wt, own))
+
+    def test_하위_에이전트_기록의_start_도_본다(self):
+        self.start("--unattended")
+        main = self.transcript()
+        sub = os.path.join(main[:-len(".jsonl")], "subagents")
+        os.makedirs(sub)
+        with open(main) as f, open(os.path.join(sub, "agent-a.jsonl"), "w") as g:
+            g.write(f.read())
+        with open(os.path.join(sub, "agent-a.jsonl"), "a", encoding="utf-8") as g:
+            g.write(json.dumps({"type": "assistant", "timestamp": "2026-01-01T00:00:02Z", "cwd": self.main, "message": {
+                "content": [{"type": "tool_use", "id": "s", "name": "Bash",
+                             "input": {"command": "cd %s && job.py start --unattended x" % self.wt}}]}}) + "\n")
+        self.assertIsNotNone(self.gate('cd %s && job.py human-done 1 "봤다"' % self.wt, main))
+
+    def test_job_py_를_부르지_않는_명령의_인자는_명령으로_치지_않는다(self):
+        self.start("--unattended")
+        self.assertIsNone(self.gate("cd %s && rg job.py contrasted docs/" % self.wt, self.own()))
+
+    def test_막을_조각이_없으면_세션_기록을_읽지_않는다(self):
+        # 모든 Bash 호출에 걸리는 훅이라, 긴 세션 기록을 매번 읽지 않게 한다
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("lead_gate_t", LEAD)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        mod.bash_calls = lambda path: 1 / 0
+        self.assertIsNone(mod.problem("ls -la && git status", self.main, self.own()))
+
     def test_다른_세션과_사람이_있는_작업의_세션은_푼다(self):
         self.start("--unattended")
         lead = self.transcript(commands=["git worktree list"])
@@ -133,6 +169,29 @@ class RemoveTest(Base):
         self.merged()
         self.assertIsNotNone(self.gate(self.removals()[0], self.own(DISPATCHED)))
 
+    def test_첫_사용자_글_앞의_메타_줄은_건너뛴다(self):
+        self.merged()
+        own = self.own(DISPATCHED)
+        with open(own, encoding="utf-8") as f:
+            rows = f.read()
+        meta = json.dumps({"type": "user", "isMeta": True, "timestamp": "2026-01-01T00:00:00Z",
+                           "message": {"role": "user", "content": "<local-command-caveat>x</local-command-caveat>"}})
+        with open(own, "w", encoding="utf-8") as f:
+            f.write(meta + "\n" + rows)
+        self.assertIsNotNone(self.gate(self.removals()[0], own))
+
+    def test_워크트리를_담은_폴더나_글롭으로_지워도_본다(self):
+        self.merged()
+        lead = self.transcript()
+        for command in ("rm -rf %s/.claude/worktrees" % self.main, "rm -rf .claude/worktrees/*", "rm -rf .claude",
+                        "git --no-pager worktree remove %s" % self.wt):
+            self.assertIsNotNone(self.gate(command, lead), command)
+
+    def test_셸_변수로_시작한_작업의_정리는_리드_기록을_요구한다(self):
+        self.merged()
+        own = self.transcript("/fade:nonstop", ['cd "$WT" && job.py start --unattended "작업"'])
+        self.assertIsNotNone(self.gate(self.removals()[0], own))
+
     def test_병합되지_않은_작업과_기록이_없는_워크트리는_막지_않는다(self):
         self.start("--unattended")
         self.assertIsNone(self.gate(self.removals()[0], self.transcript()))
@@ -163,6 +222,25 @@ class RecordTest(Base):
         self.assertIn("리드가 시뮬레이터 화면을 봤다", show)
         self.assertIn(shot, show)
 
+    def test_번호는_0_을_붙여도_같은_항목이고_숫자가_아닌_글자는_받지_않는다(self):
+        self.start()
+        self.assertEqual(job(self.wt, "human", "앱 화면").returncode, 0)
+        r = job(self.wt, "human-done", "01", "봤다")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("앱 화면", job(self.wt, "check").stdout)
+        r = job(self.wt, "human-done", "²", "봤다")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertNotIn("Traceback", r.stderr)
+
+    def test_푼_뒤_커밋이_바뀌면_다시_사람이_볼_것이_된다(self):
+        self.start()
+        self.assertEqual(job(self.wt, "human", "앱 화면").returncode, 0)
+        self.assertEqual(job(self.wt, "human-done", "1", "봤다").returncode, 0)
+        git(self.wt, "commit", "-q", "--allow-empty", "-m", "화면을 고침")
+        check = job(self.wt, "check").stdout
+        self.assertIn("앱 화면", check)
+        self.assertIn("낡", check)
+
     def test_없는_번호와_빈_근거는_받지_않는다(self):
         self.start()
         job(self.wt, "human", "앱 화면")
@@ -174,7 +252,7 @@ class RecordTest(Base):
         with open(os.path.join(ROOT, "skills", "dispatch", "SKILL.md"), encoding="utf-8") as f:
             done = f.read().split("## 4. 완료 판단", 1)[1]
         for word in ("job.py contrasted", "job.py hardened", "job.py human-done", "job.py scope merge", "job.py tried",
-                     "훅을 돌아가지 않는다"):
+                     "훅을 돌아가지 않는다", "job.py drop --tried", "job.py merged"):
             self.assertIn(word, done, word)
         with open(os.path.join(ROOT, "skills", "job", "SKILL.md"), encoding="utf-8") as f:
             self.assertIn("human-done", f.read())

@@ -99,12 +99,18 @@ class DestructiveGateTest(unittest.TestCase):
 
     def test_폴더를_알_수_없는_cd_뒤에는_그_폴더째_지우는_삭제를_막는다(self):
         # 셸 변수는 비어 있으면 cd 가 홈으로 가고, 없는 폴더로의 cd 가 실패하면 ; 뒤의 rm 은 앞 폴더에서 돈다
-        for command in ('cd "$WT" && rm -rf .', "cd $X && rm -rf *", 'cd "$WT"; rm -rf ..', "cd /no/such/dir; rm -rf .*",
+        for command in ('cd "$WT" && rm -rf .', "cd $X && rm -rf *", 'cd "$WT"; rm -rf ..',
                         'cd "$WT" && rm -rf ./', 'cd "$WT" && rm -rf a/../..'):
             self.assertBlocked(command)
         for command in ('cd "$WT" && rm -rf .fade-review/parts', 'cd "$WT" && rm -rf build *.log',
                         'cd "$WT" && rm -rf ' + os.path.join(self.cwd, "x"), "cd /no/such/dir && rm -f *"):
             self.assertAllowed(command)
+
+    def test_같은_줄에서_만든_폴더로_cd_한_뒤의_삭제는_그_폴더로_본다(self):
+        # 글자로 적은 경로는 아직 없어도 그 경로로 푼다. 알 수 없는 것은 셸 변수와 명령 치환뿐이다
+        self.assertAllowed("mkdir -p out && cd out && rm -rf *")
+        self.assertAllowed("cd /no/such/dir; rm -rf .*")
+        self.assertBlocked("cd ~/no-such-dir/.. && rm -rf *")
 
     def test_삭제_훅은_병합_훅과_같은_명령_해석을_쓴다(self):
         with open(DESTRUCTIVE, encoding="utf-8") as f:

@@ -48,6 +48,16 @@ class JobTest(unittest.TestCase):
         criteria = [l.split(" (")[0] for l in job(self.cwd, "show").stdout.splitlines() if l.startswith("  - ")]
         self.assertEqual(sorted(criteria), sorted(["  - 기준", "  - 도는 동안 남긴 증거", "  - red 가 도는 동안 남긴 증거"]))
 
+    def test_green_이_도는_동안_red_가_바뀌면_받지_않는다(self):
+        self.start()
+        # red 의 명령이 돌면서 다른 red 를 남긴다. green 은 돌린 red 가 아닌 것으로 통과를 남기면 안 된다
+        inner = '"%s" "%s" red "test -f nope.txt"' % (sys.executable, JOB)
+        self.assertEqual(job(self.cwd, "red", inner + " ; test -f done.txt").returncode, 0)
+        open(os.path.join(self.cwd, "done.txt"), "w").close()
+        r = job(self.cwd, "green")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertNotIn("green 을 기록했다", r.stdout)
+
     def test_써_보기_세션은_써_볼_레포_밖의_작업_기록을_건드리지_않는다(self):
         self.start()
         other = tempfile.TemporaryDirectory()

@@ -78,6 +78,12 @@ class ParseTest(Repo):
             self.assertIsNone(self.gate(command, self.main), command)
         self.denied("cat > n.md <<'END-NOTES'\nbody\nEND-NOTES\ngit merge feat/x", self.main)
 
+    def test_산술의_시프트와_따옴표_안의_꺾쇠_둘은_heredoc_이_아니다(self):
+        for command in ("echo $((1<<2))\ngit merge feat/x", 'git commit -m "use a<<b"\ngit merge feat/x',
+                        "python3 -c 'print(1 << 2)'\ngit merge feat/x"):
+            self.denied(command, self.main)
+        self.assertIsNone(self.gate("cat <<END_NOTES\ngit merge feat/x\nEND_NOTES", self.main))
+
 
 class RedirectNumberTest(Repo):
     """리다이렉트에 붙은 숫자(2>&1 의 2)만 fd 번호다. 띄어 쓴 숫자(gh pr merge 3 >/dev/null 의 3)는 PR 번호로 남는다."""

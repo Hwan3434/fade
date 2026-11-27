@@ -101,6 +101,20 @@ class TempRepoTest(Base):
         self.assertEqual(mistakes(log), [row])
         self.assertFalse(os.path.exists(log + ".lock"))
 
+    def test_mark_는_git_레포_밖에서는_임시_폴더라도_기본_실수_기록을_고친다(self):
+        # hardener 는 세션 임시 폴더 같은 레포 밖에서 mark 를 부를 수 있다. 고치는 것은 전역 기록이다
+        env = self.no_log_env()
+        log = self.default_log()
+        os.makedirs(os.path.dirname(log))
+        with open(log, "w", encoding="utf-8") as f:
+            f.write(json.dumps({"time": "2026-01-01T00:00:00+0000", "what": "x", "key": "", "handled": ""}) + "\n")
+        outside = tempfile.TemporaryDirectory()
+        self.addCleanup(outside.cleanup)
+        r = subprocess.run([sys.executable, os.path.join(ROOT, "skills", "job", "job.py"), "mark", "1", "key", "k"],
+                           cwd=outside.name, env=env, capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(mistakes(log)[0]["key"], "k")
+
     def test_FADE_MISTAKES_를_정하면_임시_레포에서도_쓴다(self):
         path, env = self.own_log()
         self.assertEqual(job(self.cwd, "slip", "user", "branch-name", "지적", env=env).returncode, 0)
@@ -280,6 +294,23 @@ class PrFillTest(Base):
         job(self.cwd, "slip", "ci", "k", "바꾼 뒤", env=env)
         job(self.cwd, "pr", "https://github.com/o/r/pull/7", env=env)
         self.assertEqual([m["pr"] for m in mistakes(path)], ["https://github.com/o/r/pull/7"] * 2)
+
+    def test_base_에서_시작해_브랜치를_딴_작업은_base_의_줄을_채우지_않는다(self):
+        path, env = self.own_log()
+        subprocess.run(["git", "switch", "-q", "-c", "main"], cwd=self.cwd, check=True)
+        other = tempfile.TemporaryDirectory()
+        self.addCleanup(other.cleanup)
+        subprocess.run(["git", "init", "-q", other.name], check=True)
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@x", "commit", "-q", "--allow-empty", "-m", "x"],
+                       cwd=other.name, check=True)
+        subprocess.run(["git", "switch", "-q", "-C", "main"], cwd=other.name, check=True)
+        job(other.name, "start", "작업", env=env)
+        job(other.name, "slip", "ci", "k", "main 에서 찍힌 다른 줄", env=env)
+        subprocess.run(["git", "switch", "-q", "-c", "feat/z"], cwd=other.name, check=True)
+        job(other.name, "slip", "ci", "k", "이 작업", env=env)
+        job(other.name, "pr", "https://github.com/o/r/pull/9", env=env)
+        self.assertEqual([(m["what"], m["pr"]) for m in mistakes(path)],
+                         [("main 에서 찍힌 다른 줄", ""), ("이 작업", "https://github.com/o/r/pull/9")])
 
     def test_이미_pr_이_있는_줄은_그대로다(self):
         path, env = self.own_log()
