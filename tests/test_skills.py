@@ -314,6 +314,31 @@ class DispatchConditionsTest(unittest.TestCase):
         self.assertIn("워크트리까지 지우는지", cleanup)
 
 
+class EnvironmentWordsTest(unittest.TestCase):
+    """job 의 글은 dispatch 와 같은 원칙으로 특정 앱을 이름으로 부르지 않는다. 원격이 없는 레포의 갈래는 dispatch 와 job 이 같다."""
+
+    def test_job_의_PR_단계와_SKILL_에_특정_앱의_이름이_없다(self):
+        for name in ("skills/job/SKILL.md", "skills/job/stages/pr.md"):
+            for word in ("데스크톱 앱", "CLI 든", "앱이 답을", "(데스크톱"):
+                self.assertNotIn(word, read(name), (name, word))
+
+    def test_원격이_없는_레포는_워크트리에서_하고_PR_없이_base_에_반영한다(self):
+        dispatch, pr = read("skills/dispatch/SKILL.md"), read("skills/job/stages/pr.md")
+        self.assertNotIn("GitHub 원격이 없는 폴더면 그 폴더에서", dispatch)
+        self.assertIn("git 레포가 아닌 폴더", dispatch)
+        self.assertIn("원격이 없", pr)
+
+    def test_README_는_지원하는_운영체제를_적는다(self):
+        for name in ("README.md", "README.en.md", "README.ja.md", "README.zh.md"):
+            self.assertIn("Windows", read(name), name)
+
+    def test_README_의_dispatch_줄에_지운_같은_폴더_워커_문장이_없다(self):
+        for name in ("README.md", "README.en.md", "README.ja.md", "README.zh.md"):
+            line = next(l for l in read(name).splitlines() if l.startswith("- `dispatch`"))
+            for word in ("리드와 같은 폴더", "직접 만든다", "same folder as the lead", "リードと同じフォルダ", "与主控相同的文件夹"):
+                self.assertNotIn(word, line, (name, word))
+
+
 class RepoWayTest(unittest.TestCase):
     """레포만의 방식이 있으면 워커가 판단해 따른다. 강제하는 검사나 찾아 읽는 단계는 두지 않는다."""
 
