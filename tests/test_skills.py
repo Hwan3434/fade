@@ -283,11 +283,18 @@ class DispatchConditionsTest(unittest.TestCase):
         for word in self.METHOD_WORDS:
             self.assertNotIn(word, self.text, word)
 
-    def test_README_의_dispatch_설명에_특정_방법의_이름이_없다(self):
+    def test_README_의_dispatch_설명과_원칙에_특정_방법의_이름이_없다(self):
         for name in ("README.md", "README.en.md", "README.ja.md", "README.zh.md"):
-            line = [l for l in read(name).splitlines() if l.startswith("- `dispatch`")][0]
-            for word in self.METHOD_WORDS + ("desktop app", "デスクトップアプリ", "桌面应用", "session tool"):
-                self.assertNotIn(word, line, (name, word))
+            text = read(name)
+            self.assertNotIn("Remote Control", text, name)
+            lines = [l for l in text.splitlines() if l.startswith("- `dispatch`")]
+            # 원칙 목록의 「여러 레포에서 같은 본문으로 쓰는 것만 담는다」 줄(어느 앱에서 도는지 정하지 않는다)
+            lines += [l for l in text.splitlines() if l.startswith("- ") and ("같은 본문" in l or "same text" in l
+                                                                             or "同じ本文" in l or "同样正文" in l)]
+            self.assertEqual(len(lines), 2, name)
+            for line in lines:
+                for word in self.METHOD_WORDS + ("desktop app", "デスクトップアプリ", "桌面应用", "session tool"):
+                    self.assertNotIn(word, line, (name, word))
 
     def test_조건_표가_남아_있다(self):
         table = section(self.text, "2. 워커 띄우기")
@@ -296,7 +303,8 @@ class DispatchConditionsTest(unittest.TestCase):
 
     def test_방법과_무관하게_지킬_것이_있다(self):
         body = section(self.text, "2. 워커 띄우기")
-        for word in ("환경이 주는 방법", "이미 떠 있는지", "실제로 무엇이 생겼는지", "등록", "권한 검사를 끄는",
+        for word in ("환경이 주는 방법", "이미 떠 있는지", "실제로 무엇이 생겼는지", "등록부터 하고", "권한 검사를 끄는",
+                     "먼저 묻는다",
                      "스스로 깨어날 수 없으면", "한 대화를 두 곳에서", "도는 중인 워커에 기준을 더하는 메시지를 보내지 않는다"):
             self.assertIn(word, body, word)
 
