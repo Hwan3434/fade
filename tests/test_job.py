@@ -410,7 +410,7 @@ class JobTest(unittest.TestCase):
         self.assertNotIn("실제=3", job(self.cwd, "show").stdout)
         self.assertIn("실제=3", job(self.cwd, "show", "--full").stdout)
 
-    def test_show_는_PR_본문에_붙일_기록을_낸다(self):
+    def test_show_는_PR_기록_댓글에_달_기록을_낸다(self):
         self.start()
         self.complete()
         job(self.cwd, "pr", "https://github.com/o/r/pull/7")

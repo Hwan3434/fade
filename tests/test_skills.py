@@ -168,7 +168,7 @@ class ReportTextTest(unittest.TestCase):
         self.assertIn("기록 파일", hardener)
 
 
-BODY_WORD = re.compile(r"본문|PR body|本文|正文")
+BODY_WORD = re.compile(r"본문|PR (body|description)|本文|正文", re.I)
 
 
 def sentences(text):
@@ -186,6 +186,7 @@ class PrBodyTextTest(unittest.TestCase):
 
     def setUp(self):
         self.pr = read("skills/job/stages/pr.md")
+        self.body = re.search(r"^2\. .*?(?=^3\. )", self.pr, re.M | re.S).group(0)  # 본문을 정하는 2번
 
     def test_어느_글도_PR_본문에_기록_전문을_붙이게_하지_않는다(self):
         found = []
@@ -198,7 +199,8 @@ class PrBodyTextTest(unittest.TestCase):
                     "`job.py show --full` 의 출력을 붙인다(로그 파일은 이 맥에만 있어서 내용째 붙인다).",
                     "- 기록을 볼 때는 `job.py show` 를 쓴다. `job.py show --full` 은 PR 본문과 PR 댓글에 붙일 때만 돌린다.",
                     "--full 이면 명령 전문도 붙인다. PR 본문에는 --full 을 붙인다.",
-                    "Paste the `job.py show --full` output into the PR body."):
+                    "Paste the `job.py show --full` output into the PR body.",
+                    "Put `job.py show --full` in the PR description."):
             self.assertTrue(pastes_full_into_body(old), old)
         for new in ("본문은 사람이 읽는 요약이다. 기록 전문은 보고 단계에서 PR 댓글로 단다.",
                     "PR 이 있으면 `job.py show --full | gh pr comment <PR 번호> --body-file -` 로 단다."):
@@ -207,12 +209,13 @@ class PrBodyTextTest(unittest.TestCase):
     def test_PR_단계는_명령_출력을_본문에_붙이지_않고_전문은_댓글로_돌린다(self):
         self.assertNotIn("show --full", self.pr)
         self.assertNotIn("내용째 붙인다", self.pr)
-        self.assertIn("요약", self.pr)
-        self.assertIn("댓글", self.pr)
+        self.assertIn("요약", self.body)
+        self.assertIn("기록 댓글", self.body)
 
     def test_PR_본문에는_중요한_것만_요약해_둔다(self):
-        for word in ("결과", "중요한 것", "되돌릴 수 있는가", "고른 것과 이유", "고치지 못한 것", "완료 기준", "한 줄"):
-            self.assertIn(word, self.pr)
+        for word in ("- 결과:", "중요한 것", "- 되돌릴 수 있는가:", "- 고른 것과 이유:", "- 고치지 못한 것:", "- 완료 기준:",
+                     "한 줄"):
+            self.assertIn(word, self.body)
 
     def test_dispatch_는_PR_본문에서_기록_전문을_찾지_않는다(self):
         dispatch = read("skills/dispatch/SKILL.md")
@@ -243,8 +246,10 @@ class CommitTextTest(unittest.TestCase):
             self.assertIn(word, self.commit)
 
     def test_리뷰_뒤에는_고칠_때만_커밋하고_사소한_지적은_한_커밋으로_모은다(self):
-        self.assertIn("--minor", self.commit)  # --minor 는 앞 리뷰 뒤 커밋이 하나일 때만 받는다
-        self.assertIn("한 커밋", self.commit)
+        self.assertIn("고칠 것이 있을 때만 커밋", self.commit)
+        self.assertIn("한 커밋", self.commit)  # review --minor 는 앞 리뷰 뒤의 커밋이 하나일 때만 받는다
+        self.assertIn("review.md", self.commit)  # --minor 조건은 review.md 에만 둔다
+        self.assertNotIn("--minor", self.commit)
 
     def test_병합_방식과_메시지_형식은_레포_규칙에_맡긴다(self):
         self.assertIn("레포의 규칙", self.commit)
@@ -253,6 +258,9 @@ class CommitTextTest(unittest.TestCase):
         text = read("skills/job/stages/test-first.md")
         self.assertIn("테스트만 담아 커밋", text)
         self.assertIn("구현 커밋에 함께 담는다", text)  # 커밋 검사가 실패하는 테스트를 받지 않는 레포
+        # 실패 이유를 읽은 뒤에 커밋한다. 문법 오류로 실패한 테스트를 커밋하지 않게
+        self.assertLess(text.index("실패 출력이"), text.index("테스트만 담아 커밋"))
+        self.assertIn("사소한 지적", text)  # 사소한 지적의 테스트는 따로 커밋하지 않는다
 
     def test_리뷰_단계는_막는_지적마다_커밋을_나눈다(self):
         self.assertIn("지적마다 커밋", step(read("skills/job/stages/review.md"), "막는 지적만 고친다."))
