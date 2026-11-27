@@ -222,6 +222,32 @@ class JobTest(unittest.TestCase):
             self.assertIn("job.py start <제목> [--pr-only] [--unattended]", r.stderr)
             self.assertIn("작업 기록이 없다", job(self.cwd, "show").stderr)  # 시작되지 않았다
 
+    def test_start_는_대문자나_밑줄이_든_모르는_옵션도_제목으로_삼지_않는다(self):
+        for option in ("--Unattended", "--pr_only", "--unattended=1"):
+            r = job(self.cwd, "start", option)
+            self.assertNotEqual(r.returncode, 0, option)
+            self.assertIn("모르는 옵션: " + option, r.stderr)
+            self.assertIn("작업 기록이 없다", job(self.cwd, "show").stderr)
+
+    def test_증거와_써_보기는_paths_가_아닌_옵션을_받지_않는다(self):
+        self.start()
+        for args in (("log", "기준", "true", "--path", "x"), ("evidence", "기준", self.shot(), "--path", "x"),
+                     ("tried", "써 봄", self.shot(), "--path", "x")):
+            r = job(self.cwd, *args)
+            self.assertNotEqual(r.returncode, 0, args)
+            self.assertIn("모르는 옵션: --path", r.stderr)
+        out = job(self.cwd, "show").stdout
+        self.assertIn("증거: 완료 기준에 붙인 로그나 스크린샷이 없다", out)
+        self.assertIn("직접 써 보기: 기록이 없다", out)
+
+    def test_drop_은_기준과_tried_를_함께_받지_않는다(self):
+        self.start()
+        job(self.cwd, "evidence", "기준", self.shot())
+        r = job(self.cwd, "drop", "기준", "--tried")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("job.py drop", r.stderr)
+        self.assertIn("- 증거:", job(self.cwd, "show").stdout)  # 지워지지 않았다
+
     def test_start_는_제목이_없거나_둘이면_사용법을_낸다(self):
         for args in ((), ("--unattended",), ("--unattended", "--pr-only"), ("제목", "하나 더"), ("",)):
             r = job(self.cwd, "start", *args)

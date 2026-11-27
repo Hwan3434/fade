@@ -265,7 +265,7 @@ class TriedPathsTest(Base):
         self.assertNotIn("옛 방식", job(self.cwd, "show", "--full").stdout)
 
 
-class ReviewFilesTest(Base):
+class ReviewBase(Base):
     """base 는 src/b.py 를 더한 커밋이다. 그 뒤의 커밋이 이 작업의 변경이다."""
 
     def setUp(self):
@@ -279,6 +279,8 @@ class ReviewFilesTest(Base):
         with open(os.path.join(self.cwd, ".fade-review", "diff.patch"), encoding="utf-8") as f:
             return r.stdout, f.read()
 
+
+class ReviewFilesTest(ReviewBase):
     def test_199줄이면_버그_축만_돌린다(self):
         commit_file(self.cwd, "src/big.py", lines(199))
         out, _ = self.review_files()
@@ -406,11 +408,7 @@ class RepoTest(unittest.TestCase):
             self.assertEqual(r.returncode, 0, path)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
-class MinorReviewTest(ReviewFilesTest):
+class MinorReviewTest(ReviewBase):
     """막는 지적이 0 이 된 뒤 사소한 지적을 한 커밋으로 고치고, 그 커밋만 버그 축으로 본 리뷰(review --minor)."""
 
     def spec_reviewed(self):
@@ -482,6 +480,7 @@ class MinorReviewTest(ReviewFilesTest):
         r = job(self.cwd, "review", "0", "--minor")
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("막는 지적이 0", r.stderr)
+        self.assertIn("커밋 전 변경 없이", r.stderr)
         self.assertEqual(self.review()["left"], 2)  # 거부하면 앞 기록을 바꾸지 않는다
 
     def test_앞_리뷰_뒤의_커밋이_하나가_아니면_minor_를_받지_않는다(self):
@@ -515,3 +514,7 @@ class MinorReviewTest(ReviewFilesTest):
         self.assertIn("+사소한 수정\n", diff)
         self.assertIn("+사소한 수정 둘", diff)
         self.assertNotIn("+줄 0", diff)
+
+
+if __name__ == "__main__":
+    unittest.main()
