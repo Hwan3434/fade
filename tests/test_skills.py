@@ -269,37 +269,40 @@ class CommitTextTest(unittest.TestCase):
         self.assertNotIn("커밋하고 push", read("skills/job/stages/pr.md"))
 
 
-class DispatchRemoteTest(unittest.TestCase):
+class DispatchNoRemoteTest(unittest.TestCase):
+    """dispatch 에서 Remote Control 내용을 통째로 지웠다. 앱이 세션 생성을 거부하면 그 거부 메시지가 그대로 간다."""
+
     def setUp(self):
         self.text = read("skills/dispatch/SKILL.md")
-        self.desktop = section(self.text, "데스크톱 앱")
 
-    def test_다른_폴더가_거부되면_같은_폴더에_띄우고_첫_지시문에서_워크트리를_만든다(self):
-        for word in ("Remote Control", "같은 폴더", "`cwd` 없이", "`use_worktree` 를 끄고", "git worktree add",
-                     "이후 모든 작업은 그 워크트리 안에서 한다"):
-            self.assertIn(word, self.desktop)
-        self.assertNotIn("떠 있는 세션이 있으면 메시지로 맡기고", self.desktop)
+    def test_dispatch_에_Remote_Control_과_같은_폴더_워커가_없다(self):
+        for word in ("Remote Control", "같은 폴더 워커", "리드와 같은 폴더", "리모트", "직접 만든 워크트리", "`use_worktree` 를 끄고"):
+            self.assertNotIn(word, self.text)
 
-    def test_사용자_메시지_없이_시작한_턴에서_거부되면_사용자에게_청하거나_CLI_를_쓴다(self):
-        self.assertIn("사용자의 메시지", self.desktop)
-        self.assertIn("스스로 깨어난 턴에서는 같은 폴더의 세션도 거부된다", self.desktop)
-        self.assertIn("없으면 아래 CLI 방법을 쓴다", self.desktop)
+    def test_CLI_로_띄우는_방법은_남는다(self):
+        self.assertIn("claude -p", section(self.text, "CLI (세션 도구가 없을 때)"))
 
-    def test_같은_폴더_워커에서_걸린_것을_적는다(self):
-        # 훅과 job.py 는 세션의 폴더로 기록을 찾는다. git -C 만으로는 찾지 못한다
-        self.assertIn("`cd`", self.desktop)
-        self.assertIn("`git -C`", self.desktop)
-        self.assertIn("훅", self.desktop)
+    def test_README_에도_Remote_Control_이_없다(self):
+        for name in ("README.md", "README.en.md", "README.ja.md", "README.zh.md"):
+            self.assertNotIn("Remote Control", read(name), name)
 
-    def test_워커가_만든_워크트리는_보관해도_남으니_리드가_지운다(self):
-        cleanup = section(self.text, "정리")
-        self.assertIn("보관해도", cleanup)
-        self.assertIn("**워크트리를 검사한다.**", cleanup)
-        self.assertIn("**브랜치를 지운다.**", cleanup)
 
-    def test_description_은_Remote_Control_을_CLI_로만_보내지_않는다(self):
-        description = re.search(r"^description: (.*)$", self.text, re.M).group(1)
-        self.assertNotIn("(CLI, Remote Control)", description)
+class RepoWayTest(unittest.TestCase):
+    """레포만의 방식이 있으면 워커가 판단해 따른다. 강제하는 검사나 찾아 읽는 단계는 두지 않는다."""
+
+    def setUp(self):
+        self.text = read("skills/job/SKILL.md")
+
+    def test_레포의_방식을_따르되_기록은_job_py_로_남긴다(self):
+        self.assertIn("레포만의 방식", self.text)
+        self.assertIn("레포의 방식을 따른다", self.text)
+        self.assertIn("기록은 `job.py` 로 남긴다", self.text)
+
+    def test_사용자_없음의_push_PR_병합보다_레포의_승인_규칙이_이긴다(self):
+        unattended = section(self.text, "사용자 없음일 때")
+        self.assertIn("레포의 승인 규칙", unattended)
+        self.assertIn("레포가 이긴다", unattended)
+        self.assertIn("job.py stop", unattended)
 
 
 if __name__ == "__main__":
