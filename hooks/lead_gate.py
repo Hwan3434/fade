@@ -5,15 +5,18 @@
 - 사람 없는 작업(`job.py start --unattended`)을 돈 세션이 그 작업의 `job.py human-done`(사람이 볼 것 풀기),
   `contrasted`(리드의 대조), `hardened`(hardener 결과)를 남기는 것. 사람이 볼 것을 그 작업이 스스로 풀면 human 이
   뜻이 없다. 사람이 터미널에서 치거나, 사람이 맡긴 리드(다른 세션)가 한다.
-- 병합된 워커의 워크트리를 리드의 대조와 hardener 기록 없이 지우는 것(`git worktree remove`, 워크트리 폴더째의 `rm -r`).
-  지금 세션이 그 작업을 시작했고 dispatch 의 워커가 아니면(nonstop, 사용자가 이 세션에서 맡긴 job) 막지 않는다.
+- 병합된 워커의 워크트리를 리드의 대조와 hardener 기록 없이 지우는 것(`git worktree remove`, 워크트리나 그것을 담은
+  폴더째의 `rm -r`). 지금 세션이 그 작업을 시작했고 dispatch 의 워커가 아니면(nonstop, 사용자가 이 세션에서 맡긴 job)
+  막지 않는다. dispatch 의 워커는 사람이 있어도 human-done, contrasted, hardened 를 스스로 남기지 못한다.
   병합되지 않은 작업(닫힌 PR)과 job 기록이 없는 워크트리도 막지 않는다.
 
 「지금 세션이 그 작업을 시작했는가」는 세션 기록(본체와 하위 에이전트)의 Bash 호출에서 그 워크트리에서 돈
 `job.py start` 를 찾아 가른다. dispatch 의 워커는 첫 지시문이 「fade:job 스킬로 아래 계획서를 수행한다」로 시작한다.
 명령 해석은 병합 훅과 같다(merge_gate.located). 세션 기록이 없으면 가를 수 없어 막지 않는다.
+폴더를 알 수 없는 start(셸 변수로 cd)만 있으면, 리드만 할 명령은 이 세션이 시작한 것으로 보고 막고, 지우기는 리드의
+기록을 요구한다(둘 다 막는 쪽).
 못 막는 것: 환경이 세션을 닫으면서 워크트리까지 지우는 것(Bash 가 아닌 도구), 그 세션이 띄운 다른 세션(claude -p)의 명령,
-셸 변수로 가리킨 워크트리. 이 훅이 오류로 죽으면 판정하지 않는다. 실수를 막는 난간이지 보안 경계가 아니다.
+셸 변수로 가리킨 워크트리 지우기, 리드가 병합하고 `job.py merged` 를 남기지 않은 작업(병합되지 않은 작업으로 보인다). 이 훅이 오류로 죽으면 판정하지 않는다. 실수를 막는 난간이지 보안 경계가 아니다.
 """
 import glob
 import json
@@ -29,15 +32,22 @@ DISPATCHED = "fade:job 스킬로 아래 계획서를 수행한다"  # dispatch �
 
 
 def job_command(seg):
-    """`job.py <명령> ...`(경로로 부른 것 포함)의 명령 이름. 아니면 None."""
-    for i, tok in enumerate(seg[:-1]):
-        if os.path.basename(tok) == "job.py":
-            return seg[i + 1]
-    return None
+    """`job.py <명령> ...`(경로로 부르거나 python 으로 부른 것 포함)의 명령 이름. 아니면 None.
+    다른 명령의 인자에 든 job.py(`rg job.py contrasted docs/`)는 치지 않는다."""
+    i = 1 if os.path.basename(seg[0]).startswith("python") else 0
+    while i and i < len(seg) and seg[i].startswith("-"):
+        i += 1  # python3 -I job.py
+    return seg[i + 1] if i + 1 < len(seg) and os.path.basename(seg[i]) == "job.py" else None
+
+
+def text_of(content):
+    return content if isinstance(content, str) else " ".join(
+        c.get("text", "") for c in content if isinstance(c, dict))
 
 
 def bash_calls(transcript):
-    """세션 기록(본체와 하위 에이전트)의 (호출 때의 세션 폴더, Bash 명령)들과 첫 사용자 글."""
+    """세션 기록(본체와 하위 에이전트)의 (호출 때의 세션 폴더, Bash 명령)들과 첫 사용자 글.
+    첫 사용자 글은 메타 줄(앱이나 훅이 넣은 것)을 건너뛴 사람이나 리드의 첫 지시문이다."""
     files = [transcript] + sorted(glob.glob(os.path.join(transcript[:-len(".jsonl")], "subagents", "*.jsonl")))
     calls, first = [], None
     for path in files:
@@ -48,9 +58,9 @@ def bash_calls(transcript):
                 except ValueError:
                     continue
                 content = (row.get("message") or {}).get("content")
-                if path == transcript and first is None and row.get("type") == "user" and content:
-                    first = content if isinstance(content, str) else " ".join(
-                        c.get("text", "") for c in content if isinstance(c, dict))
+                if path == transcript and first is None and row.get("type") == "user" and content \
+                        and not row.get("isMeta") and not text_of(content).lstrip().startswith("<"):
+                    first = text_of(content)
                 for part in content if isinstance(content, list) else []:
                     if isinstance(part, dict) and part.get("type") == "tool_use" and part.get("name") == "Bash":
                         calls.append((row.get("cwd"), (part.get("input") or {}).get("command") or ""))
@@ -58,71 +68,102 @@ def bash_calls(transcript):
 
 
 def started_here(calls, wt):
-    """세션 기록의 Bash 호출 가운데 그 워크트리에서 돈 `job.py start` 가 있는가."""
+    """세션 기록의 Bash 호출 가운데 그 워크트리에서 돈 `job.py start` 가 있으면 True. 폴더를 알 수 없는
+    (셸 변수로 cd 한) start 만 있으면 None(그럴 수 있음), 없으면 False."""
+    maybe = False
     for cwd, command in calls:
         try:
             pieces = merge_gate.located(command, cwd)
         except ValueError:
             continue
         for here, seg in pieces:
-            if job_command(seg) == "start" and here and os.path.isdir(here) and job.git_dir(here) \
-                    and job.top_dir(here) == wt:
+            if job_command(seg) != "start":
+                continue
+            if here is None:
+                maybe = True
+            elif os.path.isdir(here) and job.git_dir(here) and job.top_dir(here) == wt:
                 return True
-    return False
+    return None if maybe else False
 
 
-def worktree_root(path):
-    """path 가 job 기록이 있는 워크트리의 맨 위 폴더면 (기록, 워크트리), 아니면 None."""
-    if not path or not os.path.isdir(path) or not job.git_dir(path):
-        return None
-    wt = job.top_dir(path)
-    if wt != os.path.realpath(path):
-        return None  # 워크트리 안의 파일이나 하위 폴더
-    state = job.load(path)
-    return (state, wt) if state else None
+def worktrees_under(path):
+    """path 가 job 기록이 있는 워크트리의 맨 위 폴더이거나 그런 워크트리를 담은 폴더면 그 (기록, 워크트리)들.
+    워크트리 안의 파일이나 하위 폴더는 치지 않는다."""
+    if not path or not os.path.isdir(path):
+        return []
+    real = os.path.realpath(path)
+    probe = real if job.git_dir(real) else None
+    if probe is None:
+        return []
+    listing = merge_gate.git_out(probe, "worktree", "list", "--porcelain")
+    out = []
+    for line in listing.splitlines():
+        if not line.startswith("worktree "):
+            continue
+        wt = os.path.realpath(line[len("worktree "):])
+        if wt == real or wt.startswith(real.rstrip("/") + "/"):
+            state = job.load(wt) if os.path.isdir(wt) else None
+            if state:
+                out.append((state, wt))
+    return out
 
 
 def removed(here, seg):
-    """조각이 지우는 경로들: `git worktree remove <경로>` 와 재귀 `rm` 의 대상."""
+    """조각이 지우는 경로들: `git worktree remove <경로>` 와 재귀 `rm` 의 대상. 끝 이름이 글롭뿐이면(`*`) 그 폴더다."""
     name = os.path.basename(seg[0])
-    if name == "git" and seg[1:3] == ["worktree", "remove"]:
-        targets = [a for a in seg[3:] if not a.startswith("-")]
+    rest = seg[1:]
+    if name == "git":
+        while rest and rest[0].startswith("-"):
+            rest = rest[1:]  # git --no-pager 같은 옵션. 값이 붙는 것(-C)은 located 가 뗐다
+    if name == "git" and rest[:2] == ["worktree", "remove"]:
+        targets = [a for a in rest[2:] if not a.startswith("-")]
     elif name == "rm" and any(a == "--recursive" or (a.startswith("-") and not a.startswith("--") and
-                                                     ("r" in a or "R" in a)) for a in seg[1:]):
-        targets = [a for a in seg[1:] if not a.startswith("-")]
+                                                     ("r" in a or "R" in a)) for a in rest):
+        targets = [a for a in rest if not a.startswith("-")]
     else:
         return []
-    if here is None:
-        return [os.path.expanduser(t) for t in targets if os.path.isabs(os.path.expanduser(t))]
-    return [os.path.normpath(os.path.join(here, os.path.expanduser(t))) for t in targets]
+    out = []
+    for t in targets:
+        t = os.path.expanduser(t)
+        if here is None and not os.path.isabs(t):
+            continue
+        path = os.path.normpath(os.path.join(here or "/", t))
+        base = os.path.basename(path)
+        out.append(os.path.dirname(path) if any(c in base for c in "*?[") and not any(c.isalnum() for c in base)
+                   else path)
+    return out
 
 
 def problem(command, cwd, transcript):
-    """막을 이유. 없으면 None."""
-    pieces = merge_gate.located(command, cwd)
-    calls, first = bash_calls(transcript) if transcript and os.path.isfile(transcript) else (None, "")
-    if calls is None:
+    """막을 이유. 없으면 None. 막을 조각(리드만 할 job.py 명령, 지우기)이 없으면 세션 기록을 읽지 않는다.
+    모든 Bash 호출에 걸리는 훅이라서다."""
+    pieces = [(here, seg) for here, seg in merge_gate.located(command, cwd)
+              if job_command(seg) in LEAD_ONLY or removed(here, seg)]
+    if not pieces or not transcript or not os.path.isfile(transcript):
         return None  # 세션 기록이 없으면 누가 시작했는지 가를 수 없다
+    calls, first = bash_calls(transcript)
+    worker = DISPATCHED in first  # dispatch 가 띄운 워커. 사람이 있어도 리드의 일을 스스로 하지 않는다
     for here, seg in pieces:
         if job_command(seg) in LEAD_ONLY:
             found = merge_gate.job_at(here or cwd, merged_too=True)
-            if found and found[0].get("unattended") and started_here(calls, job.top_dir(found[1])):
-                return ("사람 없는 작업을 돈 세션은 그 작업의 `job.py %s` 를 스스로 남기지 못한다. 사람이 볼 것은 사람이 "
-                        "확인한 뒤 사람(터미널)이나 사람이 맡긴 리드 세션이 풀고, 대조와 hardener 는 리드가 남긴다. "
-                        "지금 할 수 없으면 보고에 남겨 사람에게 넘긴다" % job_command(seg))
+            # 셸 변수 폴더의 start 처럼 가를 수 없으면 이 세션이 시작한 것으로 본다(막는 쪽)
+            if found and (found[0].get("unattended") or worker) and started_here(calls, job.top_dir(found[1])) is not False:
+                return ("사람 없는 작업이나 dispatch 의 워커를 돈 세션은 그 작업의 `job.py %s` 를 스스로 남기지 못한다. "
+                        "사람이 볼 것은 사람이 확인한 뒤 사람(터미널)이나 사람이 맡긴 리드 세션이 풀고, 대조와 hardener 는 "
+                        "리드가 남긴다. 지금 할 수 없으면 보고에 남겨 사람에게 넘긴다" % job_command(seg))
         for path in removed(here, seg):
-            found = worktree_root(path)
-            if not found or not found[0].get("merged"):
-                continue
-            state, wt = found
-            if started_here(calls, wt) and DISPATCHED not in first:
-                continue  # 이 세션이 시작한 작업의 정리(nonstop, 이 세션에서 맡긴 job)
-            left = [label for c, label in (("contrasted", "리드의 대조(`job.py contrasted \"<대조 결과>\"`)"),
-                                       ("hardened", "hardener 결과(`job.py hardened \"<결과>\"`)")) if not state.get(c)]
-            if left:
-                return ("병합된 워커의 워크트리(%s)를 지우기 전에 리드가 남길 기록이 없다: %s. 리드가 워커의 기록을 "
-                        "완료 기준과 대조하고 hardener 를 돌린 뒤, 그 워크트리에서 남기고 지운다. 워커는 자기 워크트리를 "
-                        "지우지 않는다" % (wt, ", ".join(left)))
+            for state, wt in worktrees_under(path):
+                if not state.get("merged"):
+                    continue
+                if started_here(calls, wt) is True and not worker:
+                    continue  # 이 세션이 시작한 작업의 정리(nonstop, 이 세션에서 맡긴 job)
+                left = [label for c, label in (("contrasted", "리드의 대조(`job.py contrasted \"<대조 결과>\"`)"),
+                                               ("hardened", "hardener 결과(`job.py hardened \"<결과>\"`)"))
+                        if not state.get(c)]
+                if left:
+                    return ("병합된 워커의 워크트리(%s)를 지우기 전에 리드가 남길 기록이 없다: %s. 리드가 워커의 기록을 "
+                            "완료 기준과 대조하고 hardener 를 돌린 뒤, 그 워크트리에서 남기고 지운다. 워커는 자기 워크트리를 "
+                            "지우지 않는다" % (wt, ", ".join(left)))
     return None
 
 
