@@ -113,10 +113,10 @@ def push_problem(args, cwd):
 
 def problem(command, cwd, home):
     """막을 명령이면 (무엇, 그 조각), 아니면 None. 명령 해석(cd 따라가기, git -C, 리다이렉트 떼기)은 병합 훅의
-    located 를 그대로 쓴다. 폴더를 알 수 없는 조각(셸 변수, 없는 폴더로의 cd 뒤)의 상대 경로는 그 폴더째나 그 위를
-    지우는 것(`.`, `*`, `..`)이면 막는다. 비어 있는 셸 변수로 cd 하면 홈으로 가고, 없는 폴더로의 cd 가 실패하면
-    `;` 뒤의 rm 은 앞 폴더에서 돌아, 그 폴더가 홈일 수 있어서다."""
-    for here, seg in merge_gate.located(command, cwd):
+    located 를 그대로 쓴다. 글자로 적은 경로는 아직 없어도 그 경로로 푼다(mkdir -p out && cd out && rm -rf *).
+    폴더를 알 수 없는 조각(셸 변수나 명령 치환으로 cd 한 뒤)의 상대 경로는 그 폴더째나 그 위를 지우는 것
+    (`.`, `*`, `..`)이면 막는다. 비어 있는 셸 변수로 cd 하면 홈으로 가서다."""
+    for here, seg in merge_gate.located(command, cwd, lexical=True):
         name, args = os.path.basename(seg[0]), seg[1:]
         found = None
         if name == "rm":

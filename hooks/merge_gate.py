@@ -21,7 +21,8 @@ import job  # noqa: E402
 PUNCTUATION = ";&|()<>\n"
 CONTROL = set(";&|()\n")  # 명령을 나누는 글자. < > 는 리다이렉트라 나누지 않는다
 # heredoc 의 끝 글. 따옴표를 쳤으면 따옴표 안 전부(END-NOTES, A.B), 아니면 연산자와 따옴표가 아닌 글자들이다
-HEREDOC = re.compile(r"(?<!<)<<-?\s*(?:'([^'\n]*)'|\"([^\"\n]*)\"|\\?([^\s;&|<>()'\"]+))")
+# 따옴표 없는 끝 글은 글자나 _ 로 시작해야 한다. $((1<<2)) 의 2 를 끝 글로 읽으면 뒤 줄이 모두 본문으로 사라진다
+HEREDOC = re.compile(r"(?<!<)<<-?\s*(?:'([^'\n]*)'|\"([^\"\n]*)\"|\\?([A-Za-z_][^\s;&|<>()'\"]*))")
 QUOTED = ";&|()<>\n"  # 따옴표 안이나 \ 뒤에 있으면 글자일 뿐인 연산자 글자
 HIDE = {ord(c): 0xE000 + i for i, c in enumerate(QUOTED)}  # 해석하는 동안 쓰는 사용 영역 글자
 SHOW = {v: k for k, v in HIDE.items()}
@@ -36,7 +37,7 @@ def without_heredoc_bodies(command):
                 end = None
             continue
         out.append(line)
-        m = HEREDOC.search(line)
+        m = HEREDOC.search(hide_quoted(line))  # 따옴표 안의 << 는 heredoc 이 아니다
         if m:
             end = next(g for g in m.groups() if g is not None)
     return "\n".join(out)
@@ -149,9 +150,9 @@ MERGE_VALUE_OPTIONS = {"-m", "-F", "-s", "-X", "--strategy", "--strategy-option"
 WRAPPERS = {"sudo", "env", "command", "exec", "nohup", "time", "!", "{", "if", "then", "elif", "else", "while", "until", "do"}
 
 
-def folder(base, value):
+def folder(base, value, lexical=False):
     """cd 나 git -C 의 값으로 간 폴더. 셸 변수처럼 펼칠 수 없거나 없는 폴더면 None(알 수 없음)이다.
-    `$HOME`, `${HOME}` 은 홈으로 펼친다."""
+    lexical 이면 없는 폴더도 글자 그대로의 경로로 푼다(같은 줄에서 mkdir 한 폴더). `$HOME`, `${HOME}` 은 홈으로 펼친다."""
     for var in ("${HOME}", "$HOME"):
         if value == var or value.startswith(var + "/"):
             value = "~" + value[len(var):]
@@ -159,10 +160,10 @@ def folder(base, value):
     if "$" in value or "`" in value or (base is None and not os.path.isabs(os.path.expanduser(value))):
         return None
     path = os.path.normpath(os.path.join(base or "/", os.path.expanduser(value)))
-    return path if os.path.isdir(path) else None
+    return path if lexical or os.path.isdir(path) else None
 
 
-def located(command, cwd):
+def located(command, cwd, lexical=False):
     """명령 줄의 단순 명령 조각마다 (그 조각이 도는 폴더, 토큰들)을 돌려준다. 같은 명령 줄의 cd 를 따라가고,
     git 의 -C 는 그 조각의 폴더로 읽어 토큰에서 뗀다. 셸 예약어, 감싸는 명령, 리다이렉트는 뗀다.
     폴더를 알 수 없으면(셸 변수, 없는 폴더) 그 조각의 폴더는 None 이다. 부르는 쪽이 세션 폴더로 판정한다.
@@ -177,7 +178,7 @@ def located(command, cwd):
         if name == "cd":
             target = next((a for a in seg[1:] if not a.startswith("-") or a == "-"), "~")
             if target != "-":
-                cwd = folder(cwd, target)
+                cwd = folder(cwd, target, lexical)
             continue
         here = cwd
         if name == "git":
@@ -187,7 +188,7 @@ def located(command, cwd):
                 if a in GIT_VALUE_OPTIONS and rest:
                     value = rest.pop(0)
                     if a == "-C":
-                        here = folder(here, value)
+                        here = folder(here, value, lexical)
                     continue
                 args.append(a)
             seg = args + rest
