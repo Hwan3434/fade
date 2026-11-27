@@ -109,8 +109,13 @@ class DestructiveGateTest(unittest.TestCase):
     def test_같은_줄에서_만든_폴더로_cd_한_뒤의_삭제는_그_폴더로_본다(self):
         # 글자로 적은 경로는 아직 없어도 그 경로로 푼다. 알 수 없는 것은 셸 변수와 명령 치환뿐이다
         self.assertAllowed("mkdir -p out && cd out && rm -rf *")
-        self.assertAllowed("cd /no/such/dir; rm -rf .*")
         self.assertBlocked("cd ~/no-such-dir/.. && rm -rf *")
+
+    def test_없는_폴더로의_cd_가_실패해도_이어_도는_rm_은_앞_폴더에서_본다(self):
+        # ; || 줄바꿈 뒤의 rm 은 cd 가 실패해도 돈다. 그때 글자 그대로의 경로로 풀면 홈 삭제를 놓친다
+        for command in ("cd ~/no-such-typo 2>/dev/null; rm -rf .*", "cd build || true; rm -rf *", "cd nope\nrm -rf .",
+                        "cd /no/such/dir; rm -rf .*"):
+            self.assertBlocked(command, cwd=self.home)
 
     def test_삭제_훅은_병합_훅과_같은_명령_해석을_쓴다(self):
         with open(DESTRUCTIVE, encoding="utf-8") as f:

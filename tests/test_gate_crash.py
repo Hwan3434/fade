@@ -79,7 +79,8 @@ class ParseTest(Repo):
         self.denied("cat > n.md <<'END-NOTES'\nbody\nEND-NOTES\ngit merge feat/x", self.main)
 
     def test_산술의_시프트와_따옴표_안의_꺾쇠_둘은_heredoc_이_아니다(self):
-        for command in ("echo $((1<<2))\ngit merge feat/x", 'git commit -m "use a<<b"\ngit merge feat/x',
+        for command in ("echo $((1<<2))\ngit merge feat/x", "n=$((1<<bits))\ngit merge feat/x", "((x<<=y))\ngit merge feat/x",
+                        'git commit -m "use a<<b"\ngit merge feat/x',
                         "python3 -c 'print(1 << 2)'\ngit merge feat/x"):
             self.denied(command, self.main)
         self.assertIsNone(self.gate("cat <<END_NOTES\ngit merge feat/x\nEND_NOTES", self.main))

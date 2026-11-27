@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 from helpers import ROOT, git_repo, job
@@ -38,10 +39,11 @@ class Base(unittest.TestCase):
     def transcript(self, first="작업해 줘", commands=(), cwd=None):
         """세션 기록 파일: 첫 사용자 글과 Bash 호출들."""
         path = os.path.join(self.logs, "s%d.jsonl" % len(os.listdir(self.logs)))
-        rows = [{"type": "user", "timestamp": "2026-01-01T00:00:00Z", "cwd": cwd or self.main,
+        now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())  # job.py start 와 같은 때에 찍힌 기록
+        rows = [{"type": "user", "timestamp": now, "cwd": cwd or self.main,
                  "message": {"role": "user", "content": first}}]
         for c in commands:
-            rows.append({"type": "assistant", "timestamp": "2026-01-01T00:00:01Z", "cwd": cwd or self.main,
+            rows.append({"type": "assistant", "timestamp": now, "cwd": cwd or self.main,
                          "message": {"role": "assistant", "content": [
                              {"type": "tool_use", "id": "t", "name": "Bash", "input": {"command": c}}]}})
         with open(path, "w", encoding="utf-8") as f:
@@ -94,14 +96,38 @@ class LeadOnlyTest(Base):
         with open(main) as f, open(os.path.join(sub, "agent-a.jsonl"), "w") as g:
             g.write(f.read())
         with open(os.path.join(sub, "agent-a.jsonl"), "a", encoding="utf-8") as g:
-            g.write(json.dumps({"type": "assistant", "timestamp": "2026-01-01T00:00:02Z", "cwd": self.main, "message": {
+            g.write(json.dumps({"type": "assistant", "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                                "cwd": self.main, "message": {
                 "content": [{"type": "tool_use", "id": "s", "name": "Bash",
                              "input": {"command": "cd %s && job.py start --unattended x" % self.wt}}]}}) + "\n")
         self.assertIsNotNone(self.gate('cd %s && job.py human-done 1 "봤다"' % self.wt, main))
 
-    def test_job_py_를_부르지_않는_명령의_인자는_명령으로_치지_않는다(self):
+    def test_감싸서_부른_job_py_도_본다(self):
         self.start("--unattended")
-        self.assertIsNone(self.gate("cd %s && rg job.py contrasted docs/" % self.wt, self.own()))
+        for command in ('cd %s && timeout 30 python3 /x/job.py human-done 1 "ok"' % self.wt,
+                        'cd %s && uv run job.py contrasted x' % self.wt, 'cd %s && python3 -W ignore job.py hardened x' % self.wt):
+            self.assertIsNotNone(self.gate(command, self.own()), command)
+
+    def test_오래전에_폴더_모르게_돈_start_는_이_작업의_시작이_아니다(self):
+        # 셸 변수 폴더의 start 는 이 작업이 시작된 때에 찍힌 것만 「그럴 수 있음」으로 본다
+        self.start("--unattended")
+        lead = self.transcript(commands=['cd "$OLD" && job.py start "예전 작업"'])
+        with open(lead, encoding="utf-8") as f:
+            text = f.read().replace(time.strftime("%Y-%m-%dT", time.gmtime()), "2020-01-01T")
+        with open(lead, "w", encoding="utf-8") as f:
+            f.write(text)
+        self.assertIsNone(self.gate('cd %s && job.py hardened "제안 없음"' % self.wt, lead))
+
+    def test_첫_사용자_글의_앞_조각이_메타_글이어도_dispatch_지시문을_찾는다(self):
+        self.start()
+        own = self.own()
+        with open(own, encoding="utf-8") as f:
+            rows = [json.loads(l) for l in f]
+        rows[0]["message"]["content"] = [{"type": "text", "text": "<system-reminder>x</system-reminder>"},
+                                         {"type": "text", "text": DISPATCHED}]
+        with open(own, "w", encoding="utf-8") as f:
+            f.write("\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + "\n")
+        self.assertIsNotNone(self.gate('cd %s && job.py contrasted x' % self.wt, own))
 
     def test_막을_조각이_없으면_세션_기록을_읽지_않는다(self):
         # 모든 Bash 호출에 걸리는 훅이라, 긴 세션 기록을 매번 읽지 않게 한다
