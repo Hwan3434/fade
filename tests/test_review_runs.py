@@ -257,6 +257,10 @@ class DropTest(unittest.TestCase):
         self.assertEqual(self.review("3", "새 지적이 하나 더").returncode, 0)
         self.assertEqual(self.review("3", "그대로").returncode, 0)
 
+    def test_값을_받는_옵션만_이름_등호_값_꼴을_받는다(self):
+        r = job(self.cwd, "review", "2", "x", "--spec=1")
+        self.assertIn("모르는 옵션: --spec=1", r.stderr)
+
     def test_dropped_는_0_이상의_정수다(self):
         for bad in ("--dropped=x", "--dropped=-1", "--dropped"):
             self.assertNotEqual(self.review("2", "x", bad).returncode, 0, bad)
