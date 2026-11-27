@@ -116,6 +116,19 @@ class GitMergeTest(Repo):
         self.assertIsNone(self.gate("echo $'next: git push origin HEAD:main later'", self.wt))
         self.denied("gh pr merge 3 --squash && echo $'it\\'s'", self.main)  # 메인 체크아웃에서도 PR 브랜치로 찾는다
 
+    def test_따옴표_안의_달러_작은따옴표는_명령을_지우지_않는다(self):
+        # $'...' 바꾸기는 따옴표 밖에서만 한다. 작은따옴표 안의 $' 나 주석 속 작은따옴표에 속지 않는다
+        self.denied("grep -q 'ready$' notes.txt && git -C %s merge feat/x && echo 'done'" % self.main, self.wt)
+        self.denied('echo "$\'" && git -C %s merge feat/x && echo \'x\'' % self.main, self.wt)
+        self.denied("ls # don't\ngit -C %s merge feat/x && echo $'a\\'b' 'c'" % self.main, self.wt)
+
+    def test_파괴_명령_훅도_따옴표_안의_달러_작은따옴표에_속지_않는다(self):
+        from helpers import DESTRUCTIVE
+        for command in ("grep -q 'x$' f && rm -rf ~ && echo 'y'", "rm -rf ~ && echo $'it\\'s'"):
+            payload = {"hook_event_name": "PreToolUse", "tool_name": "Bash", "cwd": self.wt, "tool_input": {"command": command}}
+            r = subprocess.run([sys.executable, DESTRUCTIVE], input=json.dumps(payload), capture_output=True, text=True)
+            self.assertEqual(json.loads(r.stdout)["hookSpecificOutput"]["permissionDecision"], "deny", command)
+
     def test_작업_브랜치를_base_로_push_해도_본다(self):
         for command in ("git push origin feat/x:main", "git push origin HEAD:main", "git push origin HEAD:refs/heads/main"):
             self.denied(command, self.wt)
