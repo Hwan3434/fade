@@ -18,8 +18,11 @@ FADE_MISTAKES 를 정하지 않은 동안 쓰지 않는다. PR 을 기록하면 
                                          어느 명령에서든 받지 않는다. -- 로 시작하는 한 단어를 제목, 요약, 이유 같은 값으로 넣으려면
                                          그 앞에 -- 를 따로 둔다. 그 뒤의 인자는 모두 값이다 (job.py stop -- --x)
   job.py scope   merge|pr                범위를 바꾼다 (사용자가 범위를 바꿨을 때)
-  job.py red     <테스트 명령>           명령을 돌려 실패할 때만 기록한다 (구현 전)
-  job.py green                           red 의 명령을 다시 돌려 통과할 때만 기록한다 (구현 후)
+  job.py red     <테스트 명령>           명령을 돌려 실패할 때만 기록하고 실패 출력의 끝을 찍는다 (구현 전).
+                                         그때 커밋 전 변경이 있던 파일(쓰는 중인 테스트)도 적는다
+  job.py green                           red 의 명령을 다시 돌려 통과할 때만 기록한다 (구현 후). red 뒤에 red 때
+                                         커밋 전 변경이 있던 파일 말고 바뀐 파일이 없으면 받지 않는다(구현이 red 전에
+                                         이미 있었거나, 테스트만 고쳐 통과시켰다)
   job.py no-test <이유>                  레포에 테스트 실행 장치가 없을 때 red·green 대신 이유를 적는다
   job.py evidence <완료 기준> <파일>... [--paths <경로>...]
                                          스크린샷, 로그 같은 증거 파일을 기준에 붙인다. 이 레포 밖의 OS 임시 폴더에 있는
@@ -146,6 +149,30 @@ def run(cwd, command):
 
 def tail_of(text):
     return "\n".join(text.splitlines()[-TAIL:])
+
+
+def pending(cwd):
+    """커밋 전 변경이 있거나 추적하지 않는 파일(레포 기준 경로)."""
+    tracked = subprocess.run(["git", "diff", "--name-only", "HEAD"], cwd=top_dir(cwd), capture_output=True, text=True).stdout
+    return sorted(set(tracked.split("\n") + untracked(cwd)) - {""})
+
+
+def untracked(cwd):
+    return subprocess.run(["git", "ls-files", "--others", "--exclude-standard"], cwd=top_dir(cwd), capture_output=True,
+                          text=True).stdout.split("\n")
+
+
+def changed_since(cwd, red):
+    """red 를 찍은 뒤 바뀐 파일 가운데 red 때 커밋 전 변경이 없던 것. red 의 커밋이 사라졌으면 None(판정하지 않는다)."""
+    if red["head"] == "(커밋 없음)" or not is_ancestor(cwd, red["head"], "HEAD"):
+        return None
+    tracked = subprocess.run(["git", "diff", "--name-only", red["head"]], cwd=top_dir(cwd), capture_output=True,
+                             text=True).stdout.split("\n")
+    return sorted(set(tracked + untracked(cwd)) - {""} - set(red.get("pending", [])))
+
+
+def fenced(text):
+    return ["", "  ```text"] + ["  " + line for line in text.splitlines()] + ["  ```", ""]
 
 
 def at(record):
@@ -500,8 +527,10 @@ def show(state, cwd, full=False):
         lines.append("- 테스트: 없음 — " + state["no_test"])
     for old in state.get("red_history", []):
         lines.append("- 앞서 기록한 실패(red, %s): `%s` → 종료 코드 %d" % (at(old), old["cmd"], old["code"]))
+        lines += fenced(old.get("tail", "")) if full and old.get("tail") else []
     if state["red"]:
         lines.append("- 구현 전 실패(red, %s): `%s` → 종료 코드 %d" % (at(state["red"]), state["red"]["cmd"], state["red"]["code"]))
+        lines += fenced(state["red"].get("tail", "")) if full and state["red"].get("tail") else []
     if state["green"]:
         lines.append("- 구현 후 통과(green, %s): `%s`" % (at(state["green"]), state["red"]["cmd"]))
     if state["evidence"]:
@@ -657,15 +686,24 @@ def main(argv):
             sys.exit("테스트가 실패하지 않는다. 이번 변경을 판정하지 못하는 테스트다. 테스트를 고친다\n" + tail_of(out))
         if state["red"]:
             state.setdefault("red_history", []).append(state["red"])
-        state["red"] = {"cmd": args[0], "code": code, "head": head(cwd), "dirty": dirty(cwd), "tail": tail_of(out)}
+        state["red"] = {"cmd": args[0], "code": code, "head": head(cwd), "dirty": dirty(cwd), "tail": tail_of(out),
+                        "pending": pending(cwd)}
         state["green"] = None
         said = "red 를 기록했다: %s → 종료 코드 %d (커밋 %s)" % (name_of(state["red"]), code, at(state["red"]))
+        # 실패 이유가 아직 구현이 없어서인지 읽어야 커밋한다. 다시 돌리지 않아도 읽게 끝을 보인다
+        said += ("\n실패 이유를 읽는다. 아직 구현이 없어서가 아니면(문법 오류, 환경) 고치고 다시 red 를 찍는다. 출력 끝(%d줄까지):\n%s"
+                 % (TAIL, tail_of(out)) if out.strip() else "\n명령이 아무것도 찍지 않았다. 실패 이유를 읽을 수 없으니 이유가 보이게 명령을 고친다")
     elif cmd == "green":
         if not state["red"]:
             sys.exit("red 가 없다. 구현 전에 실패하는 테스트부터 기록한다")
         code, out = run(cwd, state["red"]["cmd"])
         if code != 0:
             sys.exit("테스트가 아직 통과하지 않는다 (종료 코드 %d)\n%s" % (code, tail_of(out)))
+        impl = changed_since(cwd, state["red"])
+        if impl == []:
+            sys.exit("red 뒤에 red 때 커밋 전 변경이 있던 파일(%s) 말고 바뀐 파일이 없다. 구현이 red 전에 이미 있었거나, "
+                     "테스트만 고쳐 통과시켰거나, 레포 밖의 무엇이 바뀌어 통과했다. 구현을 뺀 채 테스트만 둔 상태에서 red 를 다시 찍는다"
+                     % (", ".join(state["red"].get("pending", [])) or "없음"))
         state["green"] = {"head": head(cwd), "dirty": dirty(cwd), "tail": tail_of(out)}
         said = "green 을 기록했다: %s 통과 (커밋 %s)" % (name_of(state["red"]), at(state["green"]))
     elif cmd == "no-test":
