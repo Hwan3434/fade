@@ -40,13 +40,20 @@ FADE_MISTAKES 를 정하지 않은 동안 쓰지 않는다. PR 을 기록하면 
   job.py drop    <완료 기준> | --tried    그 기준에 붙인 증거를, --tried 면 써 보기를 모두 지운다
   job.py try-na  <이유>                  써 볼 화면도 명령도 없는 작업일 때
   job.py human   <사람이 볼 것>           사람만 판정할 수 있는 것이 남았을 때. 직접 써 보기를 대신하고, 병합을 막는다
-  job.py review-files <base>             명세 리뷰어를 띄울지 판단할 재료를 알린다. 첫 줄은 base 와의 diff 의 파일 수와 줄 수
+  job.py review-files <base>             버그 축이 볼 bug.patch(앞 리뷰가 없으면 base 와의 전체, 있으면 그 리뷰의
+                                         커밋 뒤)를 쓰고, 명세 리뷰어를 띄울지 판단할 재료를 알린다. 첫 줄은 base 와의 diff 의 파일 수와 줄 수
                                          (더한 줄 + 뺀 줄), 셋째 줄부터는 파일마다 더한 줄, 뺀 줄, 경로다. 명세 리뷰어에게 줄 show
                                          출력과 diff 를 워크트리 안 .fade-review/ (git 이 무시하는 폴더)에 쓴다. 명세 리뷰어가 본
                                          커밋이 있으면 그 뒤에 고친 부분만, 없으면 base 와의 전체를 쓴다(둘째 줄이 어느 쪽인지 알린다).
-                                         계획서 원문은 부르는 쪽이 plan.md 로 쓴다
-  job.py review  <남은 막는 지적 수> [<요약>] [--spec | --minor]
-                                         코드 리뷰 결과. 지금 커밋에서 남은 막는 지적이 0 이어야 병합한다
+                                         계획서 원문은 부르는 쪽이 plan.md 로 쓴다. 레포가 .gitattributes 에 linguist-generated,
+                                         -diff, binary 로 표시한 파일은 두 diff 에서 빼고 이름과 줄 수를 알린다. bug.patch 가
+                                         20000자를 넘으면 파일 경계에서 나눈 조각을 .fade-review/parts/ 에도 쓴다
+  job.py review  <남은 막는 지적 수> [<요약>] [--spec | --minor] [--dropped=<수>]
+                                         코드 리뷰 결과. 지금 커밋에서 남은 막는 지적이 0 이어야 병합한다.
+                                         앞 리뷰보다 수가 줄었으면 그 사이 slip 이나 새 red 가 있어야 받는다. 오탐이나
+                                         계획서의 결정과 어긋나 고치지 않고 수에서 뺀 막는 지적은 --dropped=<수> 로 적는다
+                                         (줄어든 수가 뺀 수 이하면 흔적이 없어도 받는다). fade 훅(review_gate)은 버그 축이
+                                         diff 를 실제로 읽었는지 세션 기록에서 본다
                                          --spec 은 이 커밋에서 만든 review-files 의 입력으로 명세 리뷰어도 봤다는 뜻이다.
                                          --spec 도 --minor 도 없으면 명세 리뷰어를 띄우지 않은 이유를 요약에 적어야 받는다
                                          --minor 는 막는 지적이 0 이 된 뒤 사소한 지적을 한 커밋으로 고치고, 그 커밋의 diff 만
@@ -77,6 +84,7 @@ import fcntl
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -84,8 +92,9 @@ import time
 
 TAIL = 40
 # 명령마다 받는 옵션. 여기 없는 명령은 옵션을 받지 않는다. --paths 는 뒤에 경로들을 받는다
-OPTIONS = {"start": ("--pr-only", "--unattended"), "review": ("--minor", "--spec"), "show": ("--full", "--save"),
+OPTIONS = {"start": ("--pr-only", "--unattended"), "review": ("--minor", "--spec", "--dropped"), "show": ("--full", "--save"),
            "evidence": ("--paths",), "log": ("--paths",), "tried": ("--paths",), "drop": ("--tried",)}
+VALUED = ("--dropped",)  # --이름=값 꼴로 값을 받는 옵션. 나머지 옵션에 = 이 붙으면 모르는 옵션이다
 OPTION = re.compile(r"--\S+")  # 띄어쓰기가 든 글(「--unattended 를 고친다」)은 옵션이 아니다
 COMMANDS = re.findall(r"^  job\.py (\S+)", __doc__, re.M)
 
@@ -215,7 +224,9 @@ def parse(cmd, args):
     맨 처음 나온 -- 뒤의 인자는 모두 값이다. -- 로 시작하는 한 단어를 제목, 요약, 이유로 넣는 자리다."""
     end = args.index("--") if "--" in args else len(args)
     head, tail = args[:end], args[end + 1:]
-    unknown = [a for a in head if OPTION.fullmatch(a) and a not in OPTIONS.get(cmd, ())]
+    known = OPTIONS.get(cmd, ())
+    unknown = [a for a in head if OPTION.fullmatch(a) and a not in known
+               and not (a.split("=", 1)[0] in VALUED and a.split("=", 1)[0] in known)]
     if unknown:
         sys.exit("모르는 옵션: %s\n%s" % (", ".join(unknown), usage(cmd)))
     paths = None
@@ -570,11 +581,15 @@ def show(state, cwd, full=False):
     door = state.get("door")
     if door:
         lines.append("- 되돌릴 수 있는가: %s — %s" % ("한쪽 문" if door["kind"] == "one-way" else "양쪽 문", door["why"]))
+    skipped = (state.get("review_files") or {}).get("excluded")
+    if skipped:
+        lines.append("- 리뷰에서 뺀 파일(레포의 .gitattributes 표시): " + ", ".join(excluded_text(skipped)))
     review = state.get("review")
     if review:
-        lines.append("- 리뷰(%s%s): 남은 막는 지적 %d개%s" % (
+        lines.append("- 리뷰(%s%s): 남은 막는 지적 %d개%s%s" % (
             at(review), ", 사소한 지적을 모아 고친 커밋의 버그 축" if review.get("minor") else
             ", 명세 리뷰어도 봄" if review.get("spec") else "", review["left"],
+            ", 뺀 막는 지적 %d개" % review["dropped"] if review.get("dropped") else "",
             " — " + review["note"] if review["note"] else ""))
     if state["pr"]:
         lines.append("- PR: " + state["pr"])
@@ -583,11 +598,73 @@ def show(state, cwd, full=False):
     return mask("\n".join(lines))
 
 
+PART_CHARS = 20000  # bug.patch 를 조각으로 나누는 크기. Bash 도구가 출력을 통째로 보여 주는 한도(약 30000자) 아래다
+
+
+def changed(cwd, *revs):
+    r = subprocess.run(["git", "diff", "--name-only", "-z", "--no-renames", *revs], cwd=cwd, capture_output=True, text=True)
+    return {n for n in r.stdout.split("\0") if n}
+
+
+def patch_file(header):
+    """`diff --git a/<옛 경로> b/<새 경로>` 머리의 새 경로. 리뷰 훅도 이것으로 bug.patch 의 줄이 든 파일을 가른다."""
+    rest = header[len("diff --git "):]
+    return rest.split(" b/", 1)[1] if " b/" in rest else rest
+
+
+def unreviewed(cwd, names):
+    """레포가 .gitattributes 로 읽을 대상이 아니라고 표시한 파일: linguist-generated(GitHub 가 diff 에서 접는 생성 파일),
+    -diff 와 binary(git 이 글로 비교하지 않는 파일). 표시는 작업 트리의 .gitattributes 에서 읽는다.
+    fade 는 파일 이름이나 확장자 목록을 갖지 않는다. 표시가 없으면 빼지 않는다."""
+    if not names:
+        return []
+    r = subprocess.run(["git", "check-attr", "-z", "--stdin", "linguist-generated", "diff", "binary"], cwd=cwd,
+                       input="\0".join(sorted(names)) + "\0", capture_output=True, text=True)
+    out, marked = r.stdout.split("\0"), {}
+    for path, attr, value in zip(out[0::3], out[1::3], out[2::3]):
+        mark = {("linguist-generated", "set"): "linguist-generated", ("linguist-generated", "true"): "linguist-generated",
+                ("diff", "unset"): "-diff", ("binary", "set"): "binary"}.get((attr, value))
+        if mark:
+            marked.setdefault(path, []).append(mark)
+    for path in [p for p, marks in marked.items() if "binary" in marks and "-diff" in marks]:  # binary 는 -diff 를 품는다
+        marked[path].remove("-diff")
+    return marked
+
+
+def line_counts(cwd, revs, paths):
+    """뺀 파일마다 더한 줄 + 뺀 줄. numstat 은 -diff 로 표시된 글 파일을 -a 로도 세지 않아, -a 로 만든 diff 본문을
+    센다. 이름 바꿈은 따지지 않아(--no-renames) 경로로 맞춘다."""
+    if not paths:
+        return {}
+    r = subprocess.run(["git", "diff", "-a", "--no-renames", *revs, "--"] + [":(top,literal)" + p for p in paths],
+                       cwd=cwd, capture_output=True, text=True, errors="replace")
+    counts, name = {}, None
+    for line in r.stdout.splitlines():
+        if line.startswith("diff --git "):
+            name = patch_file(line)
+            counts.setdefault(name, 0)
+        elif name and line[:1] in "+-" and not line.startswith(("+++ ", "--- ")):
+            counts[name] += 1
+    return counts
+
+
+def split_patch(text):
+    """bug.patch 를 파일 경계에서 나눠 조각마다 PART_CHARS 를 넘지 않게 묶는다. 한 파일이 그보다 크면 그 파일 하나가 한 조각이다."""
+    files, parts = re.split(r"(?m)^(?=diff --git )", text), []
+    for chunk in (f for f in files if f):
+        if parts and len(parts[-1]) + len(chunk) <= PART_CHARS:
+            parts[-1] += chunk
+        else:
+            parts.append(chunk)
+    return parts
+
+
 def review_files(cwd, state, base):
     """리뷰어는 읽기 도구만 있어 작업 폴더 밖을 읽으려면 승인이 필요하고, 데스크톱 앱은 파일 도구로 git 폴더에
     쓰는 것을 막는다. 그래서 워크트리 안에 두되, 안의 .gitignore 가 폴더째 git 에서 빼게 한다.
     명세 리뷰어를 띄울지는 정하지 않는다. 부르는 쪽이 판단하도록 크기와 바뀐 파일만 알린다."""
-    stat = subprocess.run(["git", "diff", "--numstat", base + "...HEAD"], cwd=cwd, capture_output=True, text=True)
+    top = top_dir(cwd)
+    stat = subprocess.run(["git", "diff", "--numstat", base + "...HEAD"], cwd=top, capture_output=True, text=True)
     if stat.returncode != 0:
         sys.exit("base 와의 diff 를 만들지 못했다: " + stat.stderr.strip())
     rows = [row.split("\t", 2) for row in stat.stdout.splitlines()]
@@ -597,18 +674,66 @@ def review_files(cwd, state, base):
     # 고친 부분만 주는 것은 명세 리뷰어가 실제로 본 커밋이 남아 있는 경우뿐이다
     since = review.get("spec_head")
     since = since if since and is_ancestor(cwd, since, now) else None
-    r = subprocess.run(["git", "diff", since, "HEAD"] if since else ["git", "diff", base + "...HEAD"], cwd=cwd,
-                       capture_output=True, text=True)
-    folder = os.path.join(top_dir(cwd), ".fade-review")
+    spec_range = [since, "HEAD"] if since else [base + "...HEAD"]
+    # 버그 축은 앞 리뷰(받은 것)가 본 커밋 뒤를, 앞 리뷰가 없거나 그 커밋이 사라졌으면 base 와의 전체를 본다
+    last = review.get("head")
+    last = last if last and is_ancestor(cwd, last, now) else None
+    bug_range = [last, "HEAD"] if last else [base + "...HEAD"]
+    bug_names = changed(top, *bug_range)
+    skip = unreviewed(top, changed(top, base + "...HEAD") | changed(top, *spec_range) | bug_names)
+    keep = ["--", ":/"] + [":(top,literal,exclude)" + p for p in skip]
+    r = subprocess.run(["git", "diff", *spec_range, *keep], cwd=top, capture_output=True, text=True)
+    bug = subprocess.run(["git", "diff", *bug_range, *keep], cwd=top, capture_output=True, text=True).stdout
+    folder = os.path.join(top, ".fade-review")
     os.makedirs(folder, exist_ok=True)
-    for name, text in ((".gitignore", "*\n"), ("show.txt", show(state, cwd) + "\n"), ("diff.patch", r.stdout)):
+    shutil.rmtree(os.path.join(folder, "parts"), ignore_errors=True)
+    parts = []
+    if len(bug) > PART_CHARS:
+        os.makedirs(os.path.join(folder, "parts"))
+        for i, text in enumerate(split_patch(bug), 1):
+            path = os.path.join(".fade-review", "parts", "%02d.patch" % i)
+            with open(os.path.join(top, path), "w", encoding="utf-8") as f:
+                f.write(text)
+            parts.append({"path": path, "lines": len(text.splitlines()),
+                          "files": [patch_file(l) for l in text.splitlines() if l.startswith("diff --git ")]})
+    texts = [p for p in skip if "binary" not in skip[p]]  # binary 는 줄로 셀 수 없다
+    counts = line_counts(top, [base + "...HEAD"], texts)
+    counts = dict(line_counts(top, bug_range, [p for p in texts if p not in counts]), **counts)
+    excluded = [[p, counts.get(p), skip[p]] for p in sorted(skip)]
+    emptied = not bug.strip() and bool(bug_names & set(skip))
+    # show.txt 가 이번에 뺀 파일을 보이도록 기록을 먼저 바꾼 뒤 쓴다
+    state["review_files"] = {"head": now, "dirty": dirty(cwd), "excluded": excluded, "emptied": emptied, "parts": parts}
+    for name, text in ((".gitignore", "*\n"), ("show.txt", show(state, cwd) + "\n"), ("diff.patch", r.stdout),
+                       ("bug.patch", bug)):
         with open(os.path.join(folder, name), "w", encoding="utf-8") as f:
             f.write(text)
-    state["review_files"] = {"head": now, "dirty": dirty(cwd)}
     print("base 와의 diff: 파일 %d개, 더한 줄 %d + 뺀 줄 %d = %d줄" % (len(rows), added, removed, added + removed))
     print("diff.patch: " + ("고친 부분만(명세 리뷰어가 본 %s 뒤의 diff)" % short(since) if since else "전체(base 와의 diff)"))
     print("\n".join(stat.stdout.splitlines()))
+    print("bug.patch: %d줄, %d자 (%s)" % (len(bug.splitlines()), len(bug),
+                                       "앞 리뷰가 본 %s 뒤" % short(last) if last else "base 와의 전체"))
+    if skip:
+        print("리뷰에서 뺀 파일(레포의 .gitattributes 표시) %d개: %s"
+              % (len(skip), ", ".join(excluded_text(excluded))))
+    if emptied:
+        print("bug.patch 가 비었다: 바뀐 파일이 모두 읽을 대상이 아니라고 표시돼 있다. 버그 축은 읽을 것이 없으니 "
+              "code-review 를 부르지 않고 그 사실을 리뷰 요약에 적어 남긴다. 명세 리뷰어는 diff.patch 로 본다")
+    if parts:
+        print("bug.patch 가 %d자를 넘어 파일 단위 조각 %d개로도 썼다. 조각마다 code-review 를 부른다(`medium <조각 경로>`):"
+              % (PART_CHARS, len(parts)))
+        for p in parts:
+            print("  %s: %d줄, %s" % (p["path"], p["lines"], ", ".join(p["files"])))
     return folder
+
+
+def excluded_text(excluded):
+    """뺀 파일마다 「경로(줄 수, 표시)」. 줄 수를 셀 수 없는 것(바이너리)은 줄 수를 빼고, 표시가 없던 옛 기록은 표시를 뺀다."""
+    out = []
+    for item in excluded:
+        path, count, marks = (list(item) + [[]])[:3]
+        what = (["%d줄" % count] if count is not None else []) + list(marks)
+        out.append("%s(%s)" % (path, ", ".join(what)) if what else path)
+    return out
 
 
 def minor_spec_head(cwd, prev, now):
@@ -705,7 +830,7 @@ def main(argv):
         if state["red"]:
             state.setdefault("red_history", []).append(state["red"])
         state["red"] = {"cmd": args[0], "code": code, "head": head(cwd), "dirty": dirty(cwd), "tail": tail_of(out),
-                        "pending": pending(cwd)}
+                        "pending": pending(cwd), "at": time.time()}
         state["green"] = None
         said = "red 를 기록했다: %s → 종료 코드 %d (커밋 %s)" % (name_of(state["red"]), code, at(state["red"]))
         # 실패 이유가 아직 구현이 없어서인지 읽어야 커밋한다. 다시 돌리지 않아도 읽게 끝을 보인다
@@ -789,9 +914,22 @@ def main(argv):
                 sys.exit("명세 리뷰어를 띄우지 않았으면 띄우지 않은 이유를 요약에 적는다. 띄웠으면 --spec 을 붙인다\n"
                          + usage("review"))
             spec_head = prev.get("spec_head")  # 명세 리뷰어가 마지막으로 본 커밋은 그대로다
+        dropped = [o.split("=", 1)[1] for o in options if o.startswith("--dropped=")]
+        if "--dropped" in options or (dropped and not dropped[0].isdigit()):
+            sys.exit("--dropped=<수> 는 0 이상의 정수다\n" + usage("review"))
+        dropped = int(dropped[0]) if dropped else 0
+        fixed = (prev.get("left", 0) - int(args[0]) - dropped) if prev else 0
+        since = prev.get("at")
+        if fixed > 0 and since is not None:
+            slips = [s for s in state.get("slips", []) if s.get("source") == "review" and s.get("at", 0) > since]
+            reds = [r for r in [state.get("red")] + state.get("red_history", []) if r and r.get("at", 0) > since]
+            if not slips and not reds:
+                sys.exit("남은 막는 지적이 앞 리뷰(%d개)보다 줄었는데 그 사이 고친 흔적(slip review, 새 red)이 없다. 고쳤으면 "
+                         "고친 막는 지적마다 slip review 로 남긴다. 오탐이나 계획서의 결정과 어긋나 수에서 뺐으면 "
+                         "--dropped=<수> 로 적고 이유를 요약에 쓴다" % prev["left"])
         # spec_head 는 명세 리뷰어가 마지막으로 본 커밋이다. 다음 review-files 가 그 뒤의 diff 만 준다
         state["review"] = {"left": int(args[0]), "note": note, "spec_head": spec_head, "minor": minor, "spec": spec,
-                           **where(cwd)}
+                           "dropped": dropped, "at": time.time(), **where(cwd)}
         said = "리뷰를 기록했다: 남은 막는 지적 %d개 (커밋 %s%s)" % (
             int(args[0]), at(state["review"]), ", 사소한 지적을 모아 고친 커밋의 버그 축" if minor else
             ", 명세 리뷰어도 봄" if spec else "")
@@ -827,7 +965,7 @@ def main(argv):
                      % ("|".join(SOURCES), ", ".join(keys[:30]) or "없음"))
         source, key, what = args
         written = add_mistake(cwd, state, source, what, key)
-        state.setdefault("slips", []).append({"source": source, "key": key, "what": what, **where(cwd)})
+        state.setdefault("slips", []).append({"source": source, "key": key, "what": what, "at": time.time(), **where(cwd)})
         nth = sum(1 for r in mistake_rows() if r.get("key") == key) if written else 0
         said = "%s(%s, key %s%s): %s" % ("실수 기록에 남겼다" if written else NOT_WRITTEN, source, key,
                                        ", 이 key 의 %d번째" % nth if nth else "", brief(what))
@@ -841,8 +979,8 @@ def main(argv):
     elif cmd == "review-files":
         folder = review_files(cwd, state, args[0])
         save(cwd, state)
-        print("%s 에 show.txt, diff.patch 를 썼다. 계획서 원문을 %s 로 쓰고 세 경로를 리뷰어에게 준다"
-              % (folder, os.path.join(folder, "plan.md")))
+        print("%s 에 bug.patch(버그 축), show.txt, diff.patch(명세 리뷰어)를 썼다. 버그 축은 bug.patch 를 끝까지 읽는다. "
+              "명세 리뷰어를 띄우면 계획서 원문을 %s 로 쓰고 세 경로를 준다" % (folder, os.path.join(folder, "plan.md")))
         return
     elif cmd == "check":
         left = missing(state, cwd)
