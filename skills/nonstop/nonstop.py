@@ -9,6 +9,9 @@
   nonstop.py set    <세션> <번호> <상태> <메모>  상태를 바꾸고 메모(PR 주소·질문·사유)를 남긴다. todo 로 되돌릴 때만 메모를 뺀다
   nonstop.py decide <세션> <번호> <내용>      권장안으로 정한 것을 적는다
   nonstop.py show   <세션>                   아침 보고를 출력한다
+
+플러그인의 bin/nonstop.py 가 이 파일을 부르고, Claude Code 가 bin/ 을 Bash 도구의 PATH 에 두니 경로 없이 부른다.
+init, add, set, decide 는 무엇을 했는지와 남은 작업 한 줄만 찍는다. 보고 전체는 show 에서만 나온다.
 """
 import json
 import os
@@ -95,12 +98,14 @@ def main(argv):
         if not tasks:
             sys.exit("작업 제목이 하나도 없다")
         save(session, tasks)
+        said = "작업 %d개로 목록을 만들었다" % len(tasks)
     else:
         tasks = load(session)
         if tasks is None:
             sys.exit("작업 목록이 없다. init 부터 한다")
         if cmd == "add":
             tasks.append({"id": len(tasks) + 1, "title": args[0], "state": "todo", "note": "", "decided": []})
+            said = "더했다: %d. %s" % (len(tasks), args[0])
         elif cmd == "set":
             number, state, note = args[0], args[1], "".join(args[2:3])
             if state not in STATES:
@@ -110,15 +115,19 @@ def main(argv):
             t = task(tasks, number)
             t["state"] = state
             t["note"] = note
+            said = "%d. %s → %s" % (t["id"], t["title"], state)
         elif cmd == "decide":
-            task(tasks, args[0])["decided"].append(args[1])
+            t = task(tasks, args[0])
+            t["decided"].append(args[1])
+            said = "%d. %s 에 권장안으로 정한 것을 적었다" % (t["id"], t["title"])
         elif cmd != "show":
             sys.exit(__doc__)
         if cmd != "show":
             save(session, tasks)
-    print(report(tasks))
+    # 보고 전체는 show 에서만 낸다. 기록 명령마다 전체를 찍으면 같은 글이 맥락에 쌓인다
+    print(report(tasks) + "\n" if cmd == "show" else said)
     left = remaining(tasks)
-    print("\n남은 작업 %d개%s" % (len(left), (" — 다음: %d. %s" % (left[0]["id"], left[0]["title"])) if left else ". 전부 정리됐다"))
+    print("남은 작업 %d개%s" % (len(left), (" — 다음: %d. %s" % (left[0]["id"], left[0]["title"])) if left else ". 전부 정리됐다"))
 
 
 if __name__ == "__main__":

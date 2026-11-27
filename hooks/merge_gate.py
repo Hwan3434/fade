@@ -150,7 +150,7 @@ def main():
     if not left:
         return
     reason = "fade job 의 병합 조건이 채워지지 않았다.\n" + "\n".join("- " + m for m in left) + \
-             "\n`job.py show` 로 기록을 보고 채운 뒤 다시 병합한다. 채울 수 없으면 병합하지 않고 보고한다."
+             "\n채운 뒤 `job.py check` 로 빠진 것이 없는지 보고 다시 병합한다. 채울 수 없으면 병합하지 않고 보고한다."
     print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
                                              "permissionDecisionReason": reason}}, ensure_ascii=False), flush=True)
     job.add_mistake(cwd, state, "gate", "병합하려 했으나 막힘: " + "; ".join(left))  # 판정을 먼저 내보내 기록이 실패해도 막는다

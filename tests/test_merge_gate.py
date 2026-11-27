@@ -55,6 +55,7 @@ class MergeGateTest(unittest.TestCase):
         out = self.gate("gh pr merge 3 --squash")
         self.assertEqual(out["permissionDecision"], "deny")
         self.assertIn("테스트", out["permissionDecisionReason"])
+        self.assertIn("`job.py check`", out["permissionDecisionReason"])  # 빠진 것은 show 가 아니라 check 가 낸다
 
     def test_다_채우고_CI_가_통과하면_말하지_않는다(self):
         self.complete()

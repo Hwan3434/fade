@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """job 의 단계 기록. 병합 직전에 fade 훅(hooks/merge_gate.py)이 이 기록을 본다.
 
+플러그인의 bin/job.py 가 이 파일을 부르고, Claude Code 가 bin/ 을 Bash 도구의 PATH 에 두니 경로 없이 `job.py <명령>` 으로 부른다.
+기록 명령은 무엇을 기록했는지 한두 줄만 찍는다. 기록 전체는 show, 병합 전에 빠진 것은 check 에서만 나온다.
+답을 받지 못한 질문이 있으면 기록 명령 뒤에도 그 사실을 한 줄 덧붙인다.
+
 기록은 작업 중인 워크트리의 git 폴더 안 fade-job.json 한 파일이다. 커밋되지 않고 워크트리와 함께 사라진다.
 병합 조건의 green 과 리뷰는 지금 커밋에서 찍힌 것만 친다. 증거와 써 보기는 지금 커밋에서 찍혔거나,
 기대는 경로(--paths)를 적었고 찍은 커밋 뒤로 그 경로가 바뀌지 않았으면 친다. 낡은 것이 하나라도 남으면 막는다.
@@ -19,7 +23,8 @@ stop 과 slip, 그리고 병합 훅과 승인 창 훅이 막을 때 한 줄씩 �
   job.py evidence <완료 기준> <파일>... [--paths <경로>...]
                                          스크린샷, 로그 같은 증거 파일을 기준에 붙인다
   job.py log     <완료 기준> <명령> [--paths <경로>...]
-                                         명령을 돌려 출력 전체를 파일로 남기고 증거로 붙인다
+                                         명령을 돌려 출력 전체를 파일로 남기고 증거로 붙인다. 출력은 종료 코드가 0 이 아닐 때만
+                                         끝 40줄을 찍는다. 전체는 로그 파일에 있다
   job.py tried   <무엇을 어떻게> <파일>... [--paths <경로>...]
                                          직접 써 본 기록과 그 화면·출력 파일
                                          --paths 는 그 증거나 써 보기가 기대는 레포 안의 파일과 폴더다. 적으면 그 경로가
@@ -49,10 +54,12 @@ stop 과 slip, 그리고 병합 훅과 승인 창 훅이 막을 때 한 줄씩 �
   job.py mark    <줄 번호> key|handled <값>
                                          실수 기록 한 줄의 key(같은 실수끼리 묶는 이름)나 처리를 적는다. git 레포 밖에서도 돈다
   job.py pr      <PR 주소>
-  job.py check                           병합 조건을 본다. 빠진 것이 있으면 종료 코드 1
+  job.py check                           병합 조건을 본다. 빠진 것을 모두 찍고, 있으면 종료 코드 1
   job.py merged  <병합 커밋> [<base CI 결과>]
-  job.py show [--full]                   기록. 첫 줄은 상태다. 기본은 완료 기준마다 한 줄(이름, 종료 코드, 커밋)이다.
-                                         --full 이면 명령 전문, 파일 경로, 로그 내용도 붙인다. PR 본문과 보고에는 --full 을 붙인다
+  job.py show [--full] [--save]          기록. 첫 줄은 상태다. 기본은 완료 기준마다 한 줄(이름, 종료 코드, 커밋)이다.
+                                         --full 이면 명령 전문, 파일 경로, 로그 내용도 붙인다. PR 본문에는 --full 을 붙인다.
+                                         --save 는 --full 의 출력을 찍지 않고 메인 체크아웃의 git 폴더 안 fade-job-reports/ 의
+                                         파일(워크트리가 지워져도 남는다)에 쓰고 그 절대 경로만 찍는다. PR 이 없는 작업의 보고가 가리킨다
 """
 import json
 import os
@@ -63,7 +70,7 @@ import time
 
 TAIL = 40
 # 명령마다 받는 옵션. 여기 없는 명령은 옵션을 받지 않는다. --paths 는 뒤에 경로들을 받는다
-OPTIONS = {"start": ("--pr-only", "--unattended"), "review": ("--minor", "--spec"), "show": ("--full",),
+OPTIONS = {"start": ("--pr-only", "--unattended"), "review": ("--minor", "--spec"), "show": ("--full", "--save"),
            "evidence": ("--paths",), "log": ("--paths",), "tried": ("--paths",), "drop": ("--tried",)}
 OPTION = re.compile(r"--\S+")  # 띄어쓰기가 든 글(「--unattended 를 고친다」)은 옵션이 아니다
 COMMANDS = re.findall(r"^  job\.py (\S+)", __doc__, re.M)
@@ -123,8 +130,9 @@ def dirty(cwd):
 
 
 def run(cwd, command):
-    r = subprocess.run(command, shell=True, cwd=cwd, capture_output=True, text=True)
-    return r.returncode, r.stdout + r.stderr
+    # stderr 를 stdout 에 합쳐 터미널에 찍힌 순서를 지킨다. 실패한 log 는 그 끝만 보이니 원인이 순서째 끝에 있어야 한다
+    r = subprocess.run(command, shell=True, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    return r.returncode, r.stdout
 
 
 def tail_of(text):
@@ -214,11 +222,22 @@ def holds(cwd, record, now):
     return r.returncode == 0
 
 
+def brief(text):
+    """한 줄로 줄인 글. 여러 줄 명령이 빠진 것 목록의 한 항목이나 기록 명령의 한 줄을 여러 줄로 가르지 않게 한다."""
+    text = " ".join(text.split())
+    return text if len(text) <= 80 else text[:77] + "..."
+
+
 def name_of(record):
     """낡은 증거나 써 보기를 가리킬 짧은 이름."""
-    text = record.get("what") or record.get("cmd") or ", ".join(os.path.basename(f) for f in record["files"])
-    text = " ".join(text.split())  # 여러 줄 명령이 빠진 것 목록의 한 항목을 여러 줄로 가르지 않게 한다
-    return "`%s`" % (text if len(text) <= 80 else text[:77] + "...")
+    return "`%s`" % brief(record.get("what") or record.get("cmd") or ", ".join(os.path.basename(f) for f in record["files"]))
+
+
+def report_path(cwd):
+    """show --save 가 쓰는 파일. 워크트리와 브랜치가 지워져도 남도록 메인 체크아웃의 git 폴더 안에 둔다."""
+    r = subprocess.run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], cwd=cwd,
+                       capture_output=True, text=True)
+    return os.path.join(r.stdout.strip(), "fade-job-reports", (branch(cwd) or "HEAD") + ".md")
 
 
 def put(records, new, same):
@@ -335,6 +354,11 @@ def file_lines(files):
     return out
 
 
+def taken(record):
+    """기록 명령의 한 줄에 붙이는, 찍은 커밋과 기대는 경로 수."""
+    return "커밋 %s%s" % (at(record), ", 기대는 경로 %d개" % len(record["paths"]) if record.get("paths") else "")
+
+
 def commits(records):
     return ", ".join(dict.fromkeys(at(r) for r in records if r.get("head"))) or "모름"
 
@@ -346,9 +370,13 @@ def detail(record):
             + (" (기대는 경로 %s)" % ", ".join(record["paths"]) if record.get("paths") else ""))
 
 
+def open_questions(state):
+    return [q for q in state.get("questions", []) if q["answer"] is None]  # start 가 이 칸을 넣기 전에 시작한 기록에는 없다
+
+
 def show(state, cwd, full=False):
-    questions = state.get("questions", [])  # start 가 이 칸을 넣기 전에 시작한 기록에는 없다
-    open_ = ["%d. %s" % (q["id"], q["question"]) for q in questions if q["answer"] is None]
+    questions = state.get("questions", [])
+    open_ = ["%d. %s" % (q["id"], q["question"]) for q in open_questions(state)]
     lines = ["상태: " + status(state)]
     if open_:
         lines += ["답을 받지 못한 질문 (보고 맨 위에 번호째 다시 적는다):"] + open_
@@ -400,9 +428,6 @@ def show(state, cwd, full=False):
         lines.append("- PR: " + state["pr"])
     if state["merged"]:
         lines.append("- 병합: " + state["merged"]["commit"] + (" · " + state["merged"]["ci"] if state["merged"]["ci"] else ""))
-    left = missing(state, cwd)
-    if left and not state["merged"]:
-        lines += ["", "병합 전에 빠진 것:"] + ["- " + m for m in left]
     # 이 출력은 공개 PR 에도 붙으니 사용자 이름이 든 홈 경로를 줄인다
     return "\n".join(lines).replace(os.path.expanduser("~"), "~")
 
@@ -485,7 +510,9 @@ def main(argv):
                  "red": None, "green": None, "no_test": None, "evidence": [], "tried": [], "try_na": None,
                  "human": [], "questions": [], "review": None, "door": None, "stopped": None, "pr": None, "merged": None}
         save(cwd, state)
-        print(show(state, cwd))
+        print("작업을 시작했다: 「%s」 (범위: %s%s)" % (brief(args[0]), "PR 까지" if state["scope"] == "pr" else "병합까지",
+                                                   ", 사람 없음" if state["unattended"] else ""))
+        print("기록 전체는 `job.py show`, 병합 조건에서 빠진 것은 `job.py check` 로 본다")
         return
     if state is None:
         sys.exit("작업 기록이 없다. job.py start 부터 한다")
@@ -493,10 +520,22 @@ def main(argv):
             "review": 1, "review-files": 1, "door": 2, "ask": 1, "answered": 2, "stop": 1, "slip": 2, "pr": 1, "merged": 1}
     if len(args) < need.get(cmd, 0):
         sys.exit(usage(cmd))
+    if cmd == "show":
+        if "--save" in options:
+            path = report_path(cwd)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(show(state, cwd, full=True) + "\n")
+            print("기록 전문을 썼다: " + path)
+        else:
+            print(show(state, cwd, full="--full" in options))
+        return
+    # 기록 명령은 무엇을 기록했는지(said)만 찍는다. 기록 전체는 show, 빠진 것은 check 가 낸다
     if cmd == "scope":
         if args[0] not in ("merge", "pr"):
             sys.exit("범위는 merge 나 pr 이다")
         state["scope"] = args[0]
+        said = "범위를 바꿨다: " + ("PR 까지" if args[0] == "pr" else "병합까지")
     elif cmd == "red":
         code, out = run(cwd, args[0])
         if code == 0:
@@ -505,6 +544,7 @@ def main(argv):
             state.setdefault("red_history", []).append(state["red"])
         state["red"] = {"cmd": args[0], "code": code, "head": head(cwd), "dirty": dirty(cwd), "tail": tail_of(out)}
         state["green"] = None
+        said = "red 를 기록했다: %s → 종료 코드 %d (커밋 %s)" % (name_of(state["red"]), code, at(state["red"]))
     elif cmd == "green":
         if not state["red"]:
             sys.exit("red 가 없다. 구현 전에 실패하는 테스트부터 기록한다")
@@ -512,20 +552,25 @@ def main(argv):
         if code != 0:
             sys.exit("테스트가 아직 통과하지 않는다 (종료 코드 %d)\n%s" % (code, tail_of(out)))
         state["green"] = {"head": head(cwd), "dirty": dirty(cwd), "tail": tail_of(out)}
+        said = "green 을 기록했다: %s 통과 (커밋 %s)" % (name_of(state["red"]), at(state["green"]))
     elif cmd == "no-test":
         state["no_test"] = args[0]
+        said = "테스트 없음을 기록했다: " + brief(args[0])
     elif cmd == "evidence":
-        put(state["evidence"], {"criterion": args[0], "files": need_files(args[1:]), "paths": repo_paths(cwd, paths),
-                                **where(cwd)}, ("criterion", "files"))
+        record = {"criterion": args[0], "files": need_files(args[1:]), "paths": repo_paths(cwd, paths), **where(cwd)}
+        put(state["evidence"], record, ("criterion", "files"))
+        said = "증거를 기록했다: 「%s」 ← 파일 %d개 (%s)" % (brief(args[0]), len(record["files"]), taken(record))
     elif cmd == "drop":
         if len(args) != ("--tried" not in options):
             sys.exit(usage("drop"))
         if "--tried" in options:
+            said = "지웠다: 써 보기 %d개" % len(state["tried"])
             state["tried"] = []
         else:
             kept = [e for e in state["evidence"] if e["criterion"] != args[0]]
             if len(kept) == len(state["evidence"]):
                 sys.exit("그 기준에 붙인 증거가 없다: " + args[0])
+            said = "지웠다: 「%s」의 증거 %d개" % (brief(args[0]), len(state["evidence"]) - len(kept))
             state["evidence"] = kept
     elif cmd == "log":
         paths = repo_paths(cwd, paths)
@@ -536,16 +581,23 @@ def main(argv):
         path = os.path.join(logs, "%02d.log" % (len([f for f in os.listdir(logs) if f.endswith(".log")]) + 1))
         with open(path, "w", encoding="utf-8") as f:
             f.write("$ %s\n%s\n(종료 코드 %d)\n" % (args[1], out.rstrip("\n"), code))
-        put(state["evidence"], {"criterion": args[0], "files": [path], "cmd": args[1], "code": code, "paths": paths,
-                                **where(cwd)}, ("criterion", "cmd"))
-        print(tail_of(out))
+        record = {"criterion": args[0], "files": [path], "cmd": args[1], "code": code, "paths": paths, **where(cwd)}
+        put(state["evidence"], record, ("criterion", "cmd"))
+        said = "증거를 기록했다: 「%s」 ← %s → 종료 코드 %d (%s, 로그 %s)" % (brief(args[0]), name_of(record), code,
+                                                                  taken(record), path)
+        if code:  # 실패한 명령은 원인을 알 만큼 끝을 보인다. 성공한 명령의 출력은 로그 파일에만 둔다
+            said += ("\n종료 코드가 0 이 아니라 출력 끝(%d줄까지)을 붙인다. 전체는 로그 파일에 있다:\n%s" % (TAIL, tail_of(out))
+                     if out.strip() else "\n종료 코드가 0 이 아니고, 명령이 아무것도 찍지 않았다")
     elif cmd == "tried":
-        put(state["tried"], {"what": args[0], "files": need_files(args[1:]), "paths": repo_paths(cwd, paths),
-                             **where(cwd)}, ("what",))
+        record = {"what": args[0], "files": need_files(args[1:]), "paths": repo_paths(cwd, paths), **where(cwd)}
+        put(state["tried"], record, ("what",))
+        said = "써 보기를 기록했다: %s (파일 %d개, %s)" % (name_of(record), len(record["files"]), taken(record))
     elif cmd == "try-na":
         state["try_na"] = args[0]
+        said = "써 보기 해당 없음을 기록했다: " + brief(args[0])
     elif cmd == "human":
         state["human"].append(args[0])
+        said = "사람이 볼 것을 기록했다: %s. 남아 있으면 병합하지 않는다" % brief(args[0])
     elif cmd == "review":
         if not args[0].isdigit():
             sys.exit("남은 막는 지적 수는 0 이상의 정수다")
@@ -569,15 +621,20 @@ def main(argv):
         # spec_head 는 명세 리뷰어가 마지막으로 본 커밋이다. 다음 review-files 가 그 뒤의 diff 만 준다
         state["review"] = {"left": int(args[0]), "note": note, "spec_head": spec_head, "minor": minor, "spec": spec,
                            **where(cwd)}
+        said = "리뷰를 기록했다: 남은 막는 지적 %d개 (커밋 %s%s)" % (
+            int(args[0]), at(state["review"]), ", 사소한 지적을 모아 고친 커밋의 버그 축" if minor else
+            ", 명세 리뷰어도 봄" if spec else "")
     elif cmd == "door":
         if args[0] not in ("one-way", "two-way") or not args[1].strip():
             sys.exit("job.py door one-way|two-way \"<이유와 영향 범위>\"")
         state["door"] = {"kind": args[0], "why": args[1]}
+        said = "되돌릴 수 있는가를 기록했다: " + ("한쪽 문. 병합은 사용자가 정한다" if args[0] == "one-way" else "양쪽 문")
     elif cmd == "ask":
         if not args[0].strip():
             sys.exit("질문이 비었다\n" + usage("ask"))
         questions = state.setdefault("questions", [])
         questions.append({"id": len(questions) + 1, "question": args[0], "answer": None})
+        said = "질문 %d번을 남겼다. 답을 받으면 job.py answered %d \"<답>\" 으로 적는다" % (len(questions), len(questions))
     elif cmd == "answered":
         questions = state.get("questions", [])
         if not args[0].isdigit() or not 1 <= int(args[0]) <= len(questions):
@@ -585,18 +642,23 @@ def main(argv):
         if not args[1].strip():
             sys.exit("답이 비었다\n" + usage("answered"))
         questions[int(args[0]) - 1]["answer"] = args[1]
+        said = "질문 %d번의 답을 적었다" % int(args[0])
     elif cmd == "stop":
         state["stopped"] = args[0]
         save(cwd, state)
         add_mistake(cwd, state, "stop", args[0])
+        said = "멈춤을 기록했다: %s. 병합을 막고 실수 기록에 남겼다" % brief(args[0])
     elif cmd == "slip":
         if args[0] not in ("review", "ci", "user") or not args[1].strip():
             sys.exit("job.py slip review|ci|user \"<무엇을 잘못했나>\". 병합 훅·승인 창 훅·stop 은 스스로 남긴다")
         add_mistake(cwd, state, args[0], args[1])
+        said = "실수 기록에 남겼다(%s): %s" % (args[0], brief(args[1]))
     elif cmd == "pr":
         state["pr"] = args[0]
+        said = "PR 을 기록했다: " + args[0]
     elif cmd == "merged":
         state["merged"] = {"commit": args[0], "ci": args[1] if len(args) > 1 else ""}
+        said = "병합을 기록했다: " + args[0] + (" · " + args[1] if len(args) > 1 else "")
     elif cmd == "review-files":
         folder = review_files(cwd, state, args[0])
         save(cwd, state)
@@ -607,11 +669,14 @@ def main(argv):
         left = missing(state, cwd)
         print("\n".join("- " + m for m in left) if left else "병합 조건을 모두 채웠다")
         sys.exit(1 if left else 0)
-    elif cmd != "show":
+    else:
         sys.exit(__doc__)
-    if cmd != "show":
-        save(cwd, state)
-    print(show(state, cwd, full="--full" in options))
+    save(cwd, state)
+    print(said)
+    left = open_questions(state)
+    if left:  # 기록 명령만 부르다 보고에서 빠뜨리지 않게, 답 없는 질문이 있다는 것은 늘 알린다
+        print("답을 받지 못한 질문 %d개(%s번)가 있다. 보고 맨 위에 번호째 다시 적는다(글은 job.py show)"
+              % (len(left), ", ".join(str(q["id"]) for q in left)))
 
 
 if __name__ == "__main__":
