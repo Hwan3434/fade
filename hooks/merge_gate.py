@@ -20,7 +20,11 @@ import job  # noqa: E402
 
 PUNCTUATION = ";&|()<>\n"
 CONTROL = set(";&|()\n")  # 명령을 나누는 글자. < > 는 리다이렉트라 나누지 않는다
-HEREDOC = re.compile(r"(?<!<)<<-?\s*(['\"]?)([A-Za-z_]\w*)\1")
+# heredoc 의 끝 글. 따옴표를 쳤으면 따옴표 안 전부(END-NOTES, A.B), 아니면 연산자와 따옴표가 아닌 글자들이다
+HEREDOC = re.compile(r"(?<!<)<<-?\s*(?:'([^'\n]*)'|\"([^\"\n]*)\"|\\?([^\s;&|<>()'\"]+))")
+QUOTED = ";&|()<>\n"  # 따옴표 안이나 \ 뒤에 있으면 글자일 뿐인 연산자 글자
+HIDE = {ord(c): 0xE000 + i for i, c in enumerate(QUOTED)}  # 해석하는 동안 쓰는 사용 영역 글자
+SHOW = {v: k for k, v in HIDE.items()}
 
 
 def without_heredoc_bodies(command):
@@ -34,7 +38,7 @@ def without_heredoc_bodies(command):
         out.append(line)
         m = HEREDOC.search(line)
         if m:
-            end = m.group(2)
+            end = next(g for g in m.groups() if g is not None)
     return "\n".join(out)
 
 
@@ -93,28 +97,49 @@ def without_ansi_c(command):
     return "".join(out)
 
 
+def hide_quoted(command):
+    """따옴표 안과 \\ 뒤의 연산자 글자를 사용 영역 글자로 바꾼다. shlex 는 따옴표를 벗긴 뒤 「">"」와 「>」를 같은 낱말로
+    내어, 따옴표로 묶은 글자를 리다이렉트나 명령 구분으로 읽게 된다. segments 가 나눈 뒤 되돌린다."""
+    out, quote, i, n = [], None, 0, len(command)
+    while i < n:
+        c = command[i]
+        if c == "\\" and quote != "'" and i + 1 < n:
+            out.append(c + command[i + 1].translate(HIDE))
+            i += 2
+            continue
+        if c in "'\"" and quote in (None, c):
+            quote = None if quote else c
+        out.append(c.translate(HIDE) if quote else c)
+        i += 1
+    return "".join(out)
+
+
 def segments(command):
-    """명령 줄을 실제로 실행될 단순 명령 조각(토큰 목록)들로 나눈다. 앞에 붙은 환경 변수 지정은 뗀다.
-    인용된 글자, heredoc 본문, 주석은 명령으로 치지 않는다. 해석하지 못하면 ValueError.
+    """명령 줄을 실제로 실행될 단순 명령 조각(토큰 목록)들로 나눈다. 앞에 붙은 환경 변수 지정과 리다이렉트(그 대상까지)는
+    뗀다. 인용된 글자, heredoc 본문, 주석은 명령으로 치지 않는다. 해석하지 못하면 ValueError.
     shlex 가 못 읽는 bash 의 $'...' 는 빈 따옴표로 바꿔 읽는다. 인용된 글자라 명령으로 치지 않는 것은 같다."""
     # 리다이렉트에 붙은 fd 번호(2>, 1>&2)를 뗀다. shlex 는 「3 >」과 「3>」을 같은 낱말로 나눠, 나눈 뒤에는
     # 띄어 쓴 인자(gh pr merge 3 >/dev/null 의 PR 번호)와 가를 수 없다
     command = re.sub(r"(?<![\w$\"'/.~-])\d+(?=[<>])", "", without_heredoc_bodies(command))
-    lex = shlex.shlex(without_comments(without_ansi_c(command)), posix=True,
+    lex = shlex.shlex(hide_quoted(without_comments(without_ansi_c(command))), posix=True,
                       punctuation_chars=PUNCTUATION)
     lex.whitespace_split = True
     lex.whitespace = " \t\r"  # 줄바꿈은 명령을 나누는 글자로 읽는다
     lex.commenters = ""
-    segment, found = [], []
+    segment, found, skip = [], [], False
     for tok in list(lex) + [";"]:
         if tok and set(tok) <= CONTROL:
             while segment and "=" in segment[0] and not segment[0].startswith("-"):
                 segment = segment[1:]
             if segment:
                 found.append(segment)
-            segment = []
+            segment, skip = [], False
+        elif skip:
+            skip = False  # 리다이렉트의 대상
+        elif tok and set(tok) <= set("<>&"):
+            skip = True  # 리다이렉트(>/dev/null, 2>&1, < f). 따옴표로 묶은 글자는 hide_quoted 가 숨겨 여기 오지 않는다
         else:
-            segment.append(tok)
+            segment.append(tok.translate(SHOW))
     return found
 
 
@@ -122,19 +147,6 @@ GIT_VALUE_OPTIONS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace"}
 PUSH_VALUE_OPTIONS = {"-o", "--push-option", "--repo", "--receive-pack", "--exec"}
 MERGE_VALUE_OPTIONS = {"-m", "-F", "-s", "-X", "--strategy", "--strategy-option", "--file"}
 WRAPPERS = {"sudo", "env", "command", "exec", "nohup", "time", "!", "{", "if", "then", "elif", "else", "while", "until", "do"}
-
-
-def without_redirects(seg):
-    """조각에서 리다이렉트(`>/dev/null`, `2>&1`, `< f`)와 그 대상을 뗀다. 폴더나 브랜치 이름으로 읽히지 않게 한다."""
-    out, i = [], 0
-    while i < len(seg):
-        tok = seg[i]
-        if tok and set(tok) <= set("<>&"):
-            i += 2  # 리다이렉트와 그 대상. 리다이렉트에 붙은 fd 번호(2>&1 의 2)는 segments 가 먼저 뗐다
-            continue
-        out.append(tok)
-        i += 1
-    return out
 
 
 def folder(base, value):
@@ -153,12 +165,12 @@ def folder(base, value):
 def located(command, cwd):
     """명령 줄의 단순 명령 조각마다 (그 조각이 도는 폴더, 토큰들)을 돌려준다. 같은 명령 줄의 cd 를 따라가고,
     git 의 -C 는 그 조각의 폴더로 읽어 토큰에서 뗀다. 셸 예약어, 감싸는 명령, 리다이렉트는 뗀다.
-    폴더를 알 수 없으면(셸 변수, 없는 폴더) 그 조각의 폴더는 None 이다. 부르는 쪽이 세션 폴더로 판정한다."""
+    폴더를 알 수 없으면(셸 변수, 없는 폴더) 그 조각의 폴더는 None 이다. 부르는 쪽이 세션 폴더로 판정한다.
+    리다이렉트는 segments 가 이미 뗐다."""
     out = []
     for seg in segments(command):
         while seg and (seg[0] in WRAPPERS or ("=" in seg[0] and not seg[0].startswith("-"))):
             seg = seg[1:]
-        seg = without_redirects(seg)
         if not seg:
             continue
         name = os.path.basename(seg[0])
@@ -342,7 +354,10 @@ def judge(here, seg, cwd):
         state, wt = found
         return [(state, wt, job.missing(state, wt) + [p for p in (ci_problem(wt, seg[3:]), head_problem(wt, seg[3:])) if p])]
     if here is None:
-        return []  # 어느 브랜치에서 도는지 모르니 base 로 들이는지 알 수 없다
+        if len(seg) >= 2 and os.path.basename(seg[0]) == "git" and seg[1] == "push":
+            here = cwd  # `<src>:<base>` 를 적은 push 는 폴더를 몰라도 base 로 간다. 어느 작업인지는 세션 폴더로 본다
+        else:
+            return []  # 어느 브랜치에서 도는지 모르니 base 로 들이는지 알 수 없다
     return [(state, wt, job.missing(state, wt)) for state, wt in git_targets(here, seg)]
 
 
