@@ -269,22 +269,41 @@ class CommitTextTest(unittest.TestCase):
         self.assertNotIn("커밋하고 push", read("skills/job/stages/pr.md"))
 
 
-class DispatchNoRemoteTest(unittest.TestCase):
-    """dispatch 에서 Remote Control 내용을 통째로 지웠다. 앱이 세션 생성을 거부하면 그 거부 메시지가 그대로 간다."""
+class DispatchConditionsTest(unittest.TestCase):
+    """dispatch 는 워커를 띄우는 방법을 정하지 않는다. 지금 환경이 주는 방법 가운데 조건을 모두 채우는 것으로 띄운다."""
+
+    METHOD_WORDS = ("claude -p", "start_session", "세션 도구", "데스크톱 앱", "Remote Control", "보관 도구", "--permission-mode",
+                    "use_worktree", "wake_when_done", ".claude/worktrees", "CLI (")
+    CONDITIONS = ("자기 워크트리", "같은 환경", "사람 없이 끝까지", "끝을 안다", "말을 건다", "넘겨받는다")
 
     def setUp(self):
         self.text = read("skills/dispatch/SKILL.md")
 
-    def test_dispatch_에_Remote_Control_과_같은_폴더_워커가_없다(self):
-        for word in ("Remote Control", "같은 폴더 워커", "리드와 같은 폴더", "리모트", "직접 만든 워크트리", "`use_worktree` 를 끄고"):
-            self.assertNotIn(word, self.text)
+    def test_dispatch_글에_특정_방법의_이름이_없다(self):
+        for word in self.METHOD_WORDS:
+            self.assertNotIn(word, self.text, word)
 
-    def test_CLI_로_띄우는_방법은_남는다(self):
-        self.assertIn("claude -p", section(self.text, "CLI (세션 도구가 없을 때)"))
-
-    def test_README_에도_Remote_Control_이_없다(self):
+    def test_README_의_dispatch_설명에_특정_방법의_이름이_없다(self):
         for name in ("README.md", "README.en.md", "README.ja.md", "README.zh.md"):
-            self.assertNotIn("Remote Control", read(name), name)
+            line = [l for l in read(name).splitlines() if l.startswith("- `dispatch`")][0]
+            for word in self.METHOD_WORDS + ("desktop app", "デスクトップアプリ", "桌面应用", "session tool"):
+                self.assertNotIn(word, line, (name, word))
+
+    def test_조건_표가_남아_있다(self):
+        table = section(self.text, "2. 워커 띄우기")
+        for word in self.CONDITIONS:
+            self.assertIn("| %s |" % word, table)
+
+    def test_방법과_무관하게_지킬_것이_있다(self):
+        body = section(self.text, "2. 워커 띄우기")
+        for word in ("환경이 주는 방법", "이미 떠 있는지", "실제로 무엇이 생겼는지", "등록", "권한 검사를 끄는",
+                     "스스로 깨어날 수 없으면", "한 대화를 두 곳에서", "도는 중인 워커에 기준을 더하는 메시지를 보내지 않는다"):
+            self.assertIn(word, body, word)
+
+    def test_정리는_환경이_주는_방법으로_닫고_워크트리까지_지우는지_먼저_본다(self):
+        cleanup = section(self.text, "정리")
+        self.assertIn("환경이 주는 방법", cleanup)
+        self.assertIn("워크트리까지 지우는지", cleanup)
 
 
 class RepoWayTest(unittest.TestCase):
