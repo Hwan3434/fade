@@ -130,8 +130,9 @@ def dirty(cwd):
 
 
 def run(cwd, command):
-    r = subprocess.run(command, shell=True, cwd=cwd, capture_output=True, text=True)
-    return r.returncode, r.stdout + r.stderr
+    # stderr 를 stdout 에 합쳐 터미널에 찍힌 순서를 지킨다. 실패한 log 는 그 끝만 보이니 원인이 순서째 끝에 있어야 한다
+    r = subprocess.run(command, shell=True, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    return r.returncode, r.stdout
 
 
 def tail_of(text):

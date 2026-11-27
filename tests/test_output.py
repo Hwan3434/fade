@@ -81,6 +81,12 @@ class RecordOutputTest(unittest.TestCase):
         for word in WHOLE:
             self.assertNotIn(word, r.stdout)
 
+    def test_log_가_실패하면_stderr_뒤에_찍힌_stdout_의_원인도_보인다(self):
+        self.short("start", "작업")
+        r = job(self.cwd, "log", "기준", "for i in $(seq 1 50); do echo 경고$i >&2; done; echo 원인=끝줄; exit 1")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.splitlines()[-1], "원인=끝줄")  # 터미널에 찍힌 순서 그대로 끝을 보인다
+
     def test_답_없는_질문이_있으면_기록_명령_뒤에_그_사실을_한_줄_남긴다(self):
         self.short("start", "작업")
         r = job(self.cwd, "ask", "A 와 B 중 무엇으로 할까")

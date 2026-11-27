@@ -71,6 +71,12 @@ class NonstopCleanupTest(unittest.TestCase):
         # PR 이 없는 레포(원격 없음)에서도 견줄 것이 있다
         self.assertIn("PR 이 없으면", self.cleanup)
 
+    def test_병합된_작업은_job_의_보고를_마친_뒤에_워크트리를_지운다(self):
+        # 8번 보고의 gh pr comment 와 show --save 는 워크트리의 기록을 읽는다
+        body = section(self.nonstop, "작업이 병합되면")
+        self.assertIn("`job` 의 8번 보고를 마친 뒤에", body)
+        self.assertNotIn("`job` 의 보고는 PR 본문에 남긴다", self.nonstop)
+
     def test_정리의_검사를_nonstop_에_복사하지_않는다(self):
         self.assertNotIn("headRefOid", self.nonstop)
         self.assertNotIn("status --porcelain", self.nonstop)
