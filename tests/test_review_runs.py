@@ -243,6 +243,17 @@ class GateTest(unittest.TestCase):
                                "transcript_path": self.t.path, "tool_input": {"command": "job.py review 0 \"x\""}},
                               "판정하지 못했다")
 
+    def test_막은_뒤_실수_기록이_실패해도_JSON_은_하나다(self):
+        self.t.prompt(MARKER)
+        blocker = os.path.join(self.logs.name, "파일")
+        open(blocker, "w").close()
+        env = dict(os.environ, FADE_MISTAKES=os.path.join(blocker, "mistakes.jsonl"))  # 파일 아래에는 쓸 수 없다
+        payload = {"hook_event_name": "PreToolUse", "tool_name": "Bash", "cwd": self.cwd, "transcript_path": self.t.path,
+                   "tool_input": {"command": "job.py review 0 \"x\""}}
+        r = subprocess.run([sys.executable, REVIEW_GATE], input=json.dumps(payload), capture_output=True, text=True, env=env)
+        out = json.loads(r.stdout)  # JSON 이 둘이면 여기서 깨진다
+        self.assertEqual(out["hookSpecificOutput"]["permissionDecision"], "deny")
+
     def test_임시_폴더의_레포는_막지_않되_판정하지_않았다고_알린다(self):
         d = tempfile.TemporaryDirectory()
         self.addCleanup(d.cleanup)
