@@ -401,7 +401,10 @@ def fill_pr(cwd, state):
 def rewrite(path, change):
     """잠금을 잡은 채로 부른다. 줄 목록을 change 로 고쳐 바뀌었으면 통째로 바꿔 쓴다."""
     with open(path, encoding="utf-8") as f:
-        lines = f.read().splitlines()
+        # splitlines 는 U+2028 같은 글자에서도 끊는다. 기록의 줄은 줄바꿈으로만 나뉜다
+        lines = f.read().split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
     if change(lines):
         with open(path + ".tmp", "w", encoding="utf-8") as f:
             f.write("\n".join(lines) + "\n")
@@ -412,11 +415,11 @@ def fill_lines(lines, pr, repo, now, since):
     changed = False
     for i, line in enumerate(lines):
         row = loads(line)
-        if not row:
+        if not isinstance(row, dict):
             continue
         try:
             at_ = time.mktime(time.strptime(row["time"][:19], "%Y-%m-%dT%H:%M:%S"))
-        except (KeyError, ValueError):
+        except (KeyError, TypeError, ValueError):
             continue
         if row.get("pr") or row.get("repo") != repo or row.get("branch") != now or at_ < since:
             continue
@@ -971,8 +974,12 @@ def main(argv):
                                        ", 이 key 의 %d번째" % nth if nth else "", brief(what))
     elif cmd == "pr":
         state["pr"] = args[0]
-        fill_pr(cwd, state)
+        save(cwd, state)  # PR 기록이 먼저다. 실수 기록 채우기가 실패해도 PR 은 남는다
         said = "PR 을 기록했다: " + args[0]
+        try:
+            fill_pr(cwd, state)
+        except Exception as e:
+            said += "\n실수 기록의 빈 pr 칸은 채우지 못했다(%s: %s). PR 기록에는 영향이 없다" % (type(e).__name__, e)
     elif cmd == "merged":
         state["merged"] = {"commit": args[0], "ci": args[1] if len(args) > 1 else ""}
         said = "병합을 기록했다: " + args[0] + (" · " + args[1] if len(args) > 1 else "")
