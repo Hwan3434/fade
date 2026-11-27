@@ -288,7 +288,15 @@ def mistake_rows():
     if not os.path.exists(path):
         return []
     with open(path, encoding="utf-8") as f:
-        return [json.loads(line) for line in f if line.strip()]
+        return [row for row in map(loads, f) if row]
+
+
+def loads(line):
+    """실수 기록 한 줄. 손으로 고치다 깨진 줄은 None 이다. 깨진 줄 하나로 slip 과 pr 이 죽지 않게 한다."""
+    try:
+        return json.loads(line) if line.strip() else None
+    except ValueError:
+        return None
 
 
 def mask(text):
@@ -298,8 +306,8 @@ def mask(text):
     if not home:  # 홈이 / 면 가릴 이름이 없다
         return text
     dashed = re.sub(r"[^A-Za-z0-9]", "-", home)
-    # 이름 뒤가 이름에 쓰이는 글자면 다른(더 긴 이름의) 사용자다
-    text = re.sub(re.escape(home) + r"(?![A-Za-z0-9._-])", "~", text)
+    # 이름 뒤가 이름에 쓰이는 글자면 다른(더 긴 이름의) 사용자다. 점은 뒤에 글자가 이어질 때만 이름이다(문장 끝 마침표)
+    text = re.sub(re.escape(home) + r"(?![A-Za-z0-9_-]|\.[A-Za-z0-9])", "~", text)
     return re.sub(re.escape(dashed) + r"(?![A-Za-z0-9])", "-~", text)
 
 
@@ -349,9 +357,9 @@ def rewrite(path, change):
 def fill_lines(lines, pr, repo, now, since):
     changed = False
     for i, line in enumerate(lines):
-        if not line.strip():
+        row = loads(line)
+        if not row:
             continue
-        row = json.loads(line)
         try:
             at_ = time.mktime(time.strptime(row["time"][:19], "%Y-%m-%dT%H:%M:%S"))
         except (KeyError, ValueError):

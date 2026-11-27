@@ -66,6 +66,10 @@ class MaskTest(Base):
         self.assertNotIn("a.b_c", out)
         self.assertIn("/tmp/claude-501/-~--claude/x ~/y", out)
 
+    def test_문장_끝_마침표가_붙은_홈도_가린다(self):
+        out = self.show_with_home("/Users/ab", "in /Users/ab. and /Users/ab.c/x")
+        self.assertIn("in ~. and /Users/ab.c/x", out)
+
     def test_이름이_더_긴_다른_사용자는_건드리지_않는다(self):
         out = self.show_with_home("/Users/ab", "-Users-abc-x /Users/abc/y /Users/ab")
         self.assertIn("-Users-abc-x /Users/abc/y ~", out)
@@ -162,6 +166,17 @@ class SlipKeyTest(Base):
         out = job(self.cwd, "slip", "review", "pr-number", "둘째", env=env).stdout
         self.assertIn("2번째", out)
         self.assertLessEqual(len(out.splitlines()), 2)
+
+    def test_실수_기록에_깨진_줄이_있어도_slip_과_pr_이_돈다(self):
+        path, env = self.own_log()
+        os.makedirs(os.path.dirname(path))
+        with open(path, "w", encoding="utf-8") as f:
+            f.write('{"key": "old", "what": "잘린 줄\n')
+        self.assertEqual(job(self.cwd, "slip", "review", "k", "이번", env=env).returncode, 0)
+        self.assertEqual(job(self.cwd, "pr", "https://github.com/o/r/pull/7", env=env).returncode, 0)
+        with open(path, encoding="utf-8") as f:
+            last = json.loads(f.read().splitlines()[-1])
+        self.assertEqual((last["what"], last["pr"]), ("이번", "https://github.com/o/r/pull/7"))
 
     def test_tester_가_찾은_버그는_try_로_남긴다(self):
         path, env = self.own_log()
