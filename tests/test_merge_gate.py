@@ -5,7 +5,7 @@ import sys
 import tempfile
 import unittest
 
-from helpers import GATE, commit_and_switch, fake_gh, git_repo, job, mistakes
+from helpers import GATE, commit_and_switch, commit_file, fake_gh, git_repo, job, mistakes
 
 
 class MergeGateTest(unittest.TestCase):
@@ -105,6 +105,40 @@ class MergeGateTest(unittest.TestCase):
         self.assertEqual(pr_target(["--squash", "--subject", "제목", "3"]), (["3"], []))
         self.assertEqual(pr_target(["-R", "o/r", "--body", "본문", "12"]), (["12"], ["-R", "o/r"]))
         self.assertEqual(pr_target(["--squash"]), ([], []))
+
+    def paths_evidence(self):
+        """경로를 적은 증거와 써 보기를 남긴 뒤 다른 파일을 고친 커밋을 더하고, green 과 리뷰만 다시 한다."""
+        commit_and_switch(self.cwd, "feat/x")
+        commit_file(self.cwd, "src/a.py", "a = 1\n")
+        commit_file(self.cwd, "done.txt", "")
+        job(self.cwd, "start", "작업")
+        job(self.cwd, "red", "test -f missing.txt")
+        commit_file(self.cwd, "missing.txt", "")
+        job(self.cwd, "green")
+        shot = os.path.join(self.bin.name, "s.png")
+        open(shot, "w").close()
+        job(self.cwd, "log", "기준", "echo 실제=1", "--paths", "src/a.py")
+        job(self.cwd, "tried", "써 봄", shot, "--paths", "src/a.py")
+        job(self.cwd, "door", "two-way", "스크립트만 바뀐다")
+
+    def again(self):
+        job(self.cwd, "green")
+        job(self.cwd, "review", "0")
+
+    def test_증거가_기대는_경로가_안_바뀐_커밋은_다시_찍지_않아도_병합한다(self):
+        self.paths_evidence()
+        commit_file(self.cwd, "README.md", "글\n")
+        self.again()
+        self.assertIsNone(self.gate("gh pr merge 3 --squash", head=self.head()))
+
+    def test_증거가_기대는_경로가_바뀐_커밋은_막는다(self):
+        self.paths_evidence()
+        commit_file(self.cwd, "src/a.py", "a = 2\n")
+        self.again()
+        out = self.gate("gh pr merge 3 --squash", head=self.head())
+        self.assertEqual(out["permissionDecision"], "deny")
+        self.assertIn("증거", out["permissionDecisionReason"])
+        self.assertIn("직접 써 보기", out["permissionDecisionReason"])
 
     def test_PR_최신_커밋이_검증한_로컬_HEAD_와_다르면_막는다(self):
         commit_and_switch(self.cwd, "feat/x")

@@ -23,7 +23,8 @@ def main():
     if command:
         what += " `" + command + "`"
     message = ("사람 없는 fade job 이라 승인을 기다리지 않고 거부했다: " + what + ". 형태를 바꿔 다시 시도하지 않는다. "
-               "`job.py stop \"<막힌 자리와 이유>\"` 로 남기고, 사용자에게 보고한 뒤 끝낸다.")
+               "완료 기준을 채우는 데 꼭 필요한 일이면 `job.py stop \"<막힌 자리와 이유>\"` 로 남기고 사용자에게 보고한 뒤 끝낸다. "
+               "필요하지 않은 곁가지(정리, 미리 보기)면 그 일을 빼고 진행하고 보고에 적는다.")
     print(json.dumps({"hookSpecificOutput": {"hookEventName": "PermissionRequest",
                                              "decision": {"behavior": "deny", "message": message, "interrupt": False}}},
                      ensure_ascii=False), flush=True)
