@@ -408,3 +408,97 @@ class RepoTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MinorReviewTest(ReviewFilesTest):
+    """막는 지적이 0 이 된 뒤 사소한 지적을 한 커밋으로 고치고, 그 커밋만 버그 축으로 본 리뷰(review --minor)."""
+
+    def spec_reviewed(self):
+        """200줄짜리 변경을 명세 리뷰어까지 보고 막는 지적 0 으로 남긴다."""
+        commit_file(self.cwd, "src/big.py", lines(200))
+        self.review_files()
+        self.assertEqual(job(self.cwd, "review", "0", "사소한 지적 둘").returncode, 0)
+
+    def review(self):
+        with open(self.state(), encoding="utf-8") as f:
+            return json.load(f)["review"]
+
+    def test_사소한_지적이_없으면_앞_리뷰가_그대로_병합_조건을_채운다(self):
+        self.spec_reviewed()
+        self.assertNotIn("리뷰:", self.check())
+
+    def test_여러_개를_한_커밋으로_고친_뒤의_리뷰는_병합_조건을_채운다(self):
+        self.spec_reviewed()
+        subprocess.run(GIT + ["commit", "-q", "--allow-empty", "-m", "사소한 지적 둘을 고친다"], cwd=self.cwd, check=True)
+        self.assertIn("리뷰: 마지막 커밋", self.check())  # 고친 커밋이 생겨 앞 리뷰는 낡았다
+        r = job(self.cwd, "review", "0", "사소한 지적 둘을 고침", "--minor")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("리뷰:", self.check())
+        self.assertIn("사소한 지적을 모아 고친 커밋", r.stdout)
+        self.assertIn("— 사소한 지적 둘을 고침", r.stdout)
+        self.assertEqual(self.review()["note"], "사소한 지적 둘을 고침")
+
+    def test_minor_를_수_앞에_써도_옵션으로_읽는다(self):
+        self.spec_reviewed()
+        commit_file(self.cwd, "src/nit.py", "사소한 수정\n")
+        r = job(self.cwd, "review", "--minor", "0", "요약")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual((self.review()["left"], self.review()["note"]), (0, "요약"))
+        self.assertIn("사소한 지적을 모아 고친 커밋", r.stdout)
+
+    def test_그_커밋에서_막는_지적이_나오면_원래_흐름으로_돌아가_명세_리뷰어가_본_뒤의_diff_를_준다(self):
+        self.spec_reviewed()
+        commit_file(self.cwd, "src/nit.py", "사소한 수정\n")
+        self.assertEqual(job(self.cwd, "review", "1", "막는 지적 하나", "--minor").returncode, 0)
+        self.assertIn("남은 막는 지적 1개", self.check())
+        commit_file(self.cwd, "src/fix.py", "막는 지적 수정\n")
+        out, diff = self.review_files()
+        self.assertIn("고친 부분", out)
+        self.assertIn("+사소한 수정", diff)  # 명세 리뷰어가 보지 못한 사소한 수정 커밋도 담는다
+        self.assertIn("+막는 지적 수정", diff)
+        self.assertNotIn("+줄 0", diff)
+        self.assertEqual(job(self.cwd, "review", "0").returncode, 0)
+        self.assertNotIn("리뷰:", self.check())
+        self.assertNotIn("사소한 지적을 모아 고친 커밋", job(self.cwd, "show").stdout)
+
+    def test_그_커밋에서_리뷰_입력을_만들었어도_명세_리뷰어가_본_것으로_치지_않는다(self):
+        self.spec_reviewed()
+        commit_file(self.cwd, "src/nit.py", "사소한 수정\n")
+        self.review_files()
+        self.assertEqual(job(self.cwd, "review", "1", "--minor").returncode, 0)
+        commit_file(self.cwd, "src/fix.py", "막는 지적 수정\n")
+        _, diff = self.review_files()
+        self.assertIn("+사소한 수정", diff)
+        self.assertNotIn("+줄 0", diff)
+
+    def test_앞_리뷰가_없거나_막는_지적이_남았으면_minor_를_받지_않는다(self):
+        commit_file(self.cwd, "src/big.py", lines(200))
+        r = job(self.cwd, "review", "0", "--minor")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("막는 지적이 0", r.stderr)
+        self.review_files()
+        job(self.cwd, "review", "2", "막는 지적 둘")
+        commit_file(self.cwd, "src/nit.py", "사소한 수정\n")
+        r = job(self.cwd, "review", "0", "--minor")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("막는 지적이 0", r.stderr)
+        self.assertEqual(self.review()["left"], 2)  # 거부하면 앞 기록을 바꾸지 않는다
+
+    def test_앞_리뷰_뒤의_커밋이_하나가_아니면_minor_를_받지_않는다(self):
+        self.spec_reviewed()
+        r = job(self.cwd, "review", "0", "--minor")  # 고친 커밋이 없다
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("0개", r.stderr)
+        commit_file(self.cwd, "src/nit.py", "사소한 수정\n")
+        commit_file(self.cwd, "src/nit2.py", "사소한 수정 둘\n")
+        r = job(self.cwd, "review", "0", "--minor")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("2개", r.stderr)
+        self.assertIn("review-files", r.stderr)
+
+    def test_앞_리뷰_커밋이_사라졌으면_minor_를_받지_않는다(self):
+        self.spec_reviewed()
+        self.amend()
+        r = job(self.cwd, "review", "0", "--minor")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("review-files", r.stderr)

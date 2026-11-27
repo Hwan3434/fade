@@ -192,6 +192,54 @@ class JobTest(unittest.TestCase):
         self.start("--unattended")
         self.assertIn("사람 없음", job(self.cwd, "show").stdout)
 
+    def started(self, *args):
+        """start 를 돌려 (작업 줄의 제목, 사람 없음인가, PR 까지인가)를 돌려준다."""
+        r = job(self.cwd, "start", *args)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return ([line[len("- 작업: "):] for line in r.stdout.splitlines() if line.startswith("- 작업: ")][0],
+                "- 사람 없음" in r.stdout, "- 범위: PR 까지" in r.stdout)
+
+    def test_start_옵션을_제목_뒤에_써도_읽는다(self):
+        self.assertEqual(self.started("제목", "--unattended", "--pr-only"), ("제목", True, True))
+
+    def test_start_옵션을_제목_앞에_써도_읽는다(self):
+        self.assertEqual(self.started("--unattended", "--pr-only", "제목"), ("제목", True, True))
+
+    def test_start_옵션을_제목_양쪽에_써도_읽는다(self):
+        self.assertEqual(self.started("--pr-only", "제목", "--unattended"), ("제목", True, True))
+
+    def test_start_옵션이_없으면_사람_있음에_병합까지다(self):
+        self.assertEqual(self.started("제목"), ("제목", False, False))
+
+    def test_start_는_옵션으로_시작하는_글을_제목으로_받는다(self):
+        self.assertEqual(self.started("--unattended 를 앞에서도 읽는다")[0], "--unattended 를 앞에서도 읽는다")
+
+    def test_start_는_모르는_옵션을_제목으로_삼지_않고_사용법을_낸다(self):
+        for args in (("--unatended", "제목"), ("제목", "--unatended"), ("--unatended",)):
+            r = job(self.cwd, "start", *args)
+            self.assertNotEqual(r.returncode, 0, args)
+            self.assertIn("모르는 옵션: --unatended", r.stderr)
+            self.assertIn("job.py start <제목> [--pr-only] [--unattended]", r.stderr)
+            self.assertIn("작업 기록이 없다", job(self.cwd, "show").stderr)  # 시작되지 않았다
+
+    def test_start_는_제목이_없거나_둘이면_사용법을_낸다(self):
+        for args in ((), ("--unattended",), ("--unattended", "--pr-only"), ("제목", "하나 더"), ("",)):
+            r = job(self.cwd, "start", *args)
+            self.assertNotEqual(r.returncode, 0, args)
+            self.assertIn("job.py start <제목> [--pr-only] [--unattended]", r.stderr)
+            self.assertIn("작업 기록이 없다", job(self.cwd, "show").stderr)
+
+    def test_show_와_review_도_모르는_옵션을_받지_않는다(self):
+        self.start()
+        r = job(self.cwd, "show", "--ful")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("모르는 옵션: --ful", r.stderr)
+        self.assertEqual(job(self.cwd, "show", "--full").returncode, 0)
+        r = job(self.cwd, "review", "0", "--mino")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("모르는 옵션: --mino", r.stderr)
+        self.assertNotIn("- 리뷰(", job(self.cwd, "show").stdout)  # 기록되지 않았다
+
     def test_사람이_볼_것이_있으면_써_보기를_채운_것으로_친다(self):
         self.start()
         job(self.cwd, "no-test", "장치 없음")
