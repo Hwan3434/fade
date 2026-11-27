@@ -20,10 +20,14 @@ def unattended_job(data):
     """승인 창을 띄우려는 일이 닿는 사람 없는 job 의 (기록, 워크트리). 없으면 None."""
     cwd = data.get("cwd") or os.getcwd()
     tool_input = data.get("tool_input") or {}
-    places = [here for here, _ in merge_gate.located(tool_input.get("command") or "", cwd)]
+    try:
+        places = [here for here, _ in merge_gate.located(tool_input.get("command") or "", cwd)]
+    except ValueError:  # 셸은 받지만 shlex 가 못 읽는 명령($'...' 등)은 세션 폴더로만 판정한다
+        places = []
     for key in ("file_path", "notebook_path", "path"):
         if isinstance(tool_input.get(key), str):
-            places.append(os.path.dirname(os.path.join(cwd, tool_input[key])))
+            path = os.path.join(cwd, tool_input[key])
+            places.append(path if os.path.isdir(path) else os.path.dirname(path))
     for place in places + [cwd]:
         found = merge_gate.job_at(place, merged_too=True)
         if found and found[0].get("unattended"):
