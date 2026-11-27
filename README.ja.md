@@ -81,6 +81,8 @@ claude plugin install fade@fade
 
 デスクトップアプリは同じ設定を読むので、CLI で一度インストールすれば両方で使えます。Claude のクラウドセッションはプラグインを読み込みません。クラウドで使うリポジトリには、スキルフォルダのコピーを `.claude/skills/` に置きます。コピーには `bin/` がないので、`job.py` はスキルの文章が示す別の形（`python3 "${CLAUDE_SKILL_DIR}/job.py"`）で呼ばれます。claude.ai と Cowork は最上位に `bin/` があるプラグインをインストールしないので、fade もそこにはインストールされません。
 
+fade は macOS と Linux で動きます。`job.py` とフックはファイルのロックに `fcntl` を使うので、Windows ではフックが判定せずに通し、`job.py` は動きません。
+
 ## 参考にしたもの
 
 - [mattpocock/skills](https://github.com/mattpocock/skills): `grill` は `grilling` から、`debug` は `diagnosing-bugs` から出発しました。`code-review` の仕様の軸は `reviewer` の仕様の確認に、`tdd` のテストの基準（期待値は独立した定数にし、自分のモジュールをモックにしない）は `reviewer` のテストの質に、`retro` は `hardener` に、`pr` の Merge Danger（一方通行のドアか双方向のドアか、影響範囲）は `job.py door` に取り入れました。

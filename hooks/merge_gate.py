@@ -347,7 +347,7 @@ def problems(command, cwd):
 def judge(here, seg, cwd):
     """한 조각이 base 로 들이는 job 들의 (기록, 워크트리, 빠진 것들)."""
     if len(seg) >= 3 and os.path.basename(seg[0]) == "gh" and seg[1:3] == ["pr", "merge"]:
-        # 폴더를 알 수 없거나(셸 변수, 없는 폴더) 그 폴더에서 못 찾으면 세션 폴더의 기록을 본다
+        # 폴더를 알 수 없거나(셸 변수, 없는 폴더) 그 폴더에서 기록을 못 찾으면(기록 없는 다른 레포 포함) 세션 폴더의 기록을 본다
         found = gh_target(here, seg[3:]) or (here != cwd and gh_target(cwd, seg[3:]))
         if not found:
             return []

@@ -81,6 +81,8 @@ claude plugin install fade@fade
 
 데스크톱 앱은 같은 설정을 읽으므로 CLI 로 한 번 설치하면 둘 다에서 쓴다. Claude 클라우드 세션은 플러그인을 읽지 않는다. 클라우드에서 쓸 레포에는 스킬 폴더 사본을 `.claude/skills/` 에 넣는다. 사본에는 `bin/` 이 없으니 `job.py` 는 스킬 글이 적은 다른 모양(`python3 "${CLAUDE_SKILL_DIR}/job.py"`)으로 불린다. claude.ai 와 Cowork 는 최상위에 `bin/` 이 있는 플러그인을 설치하지 않으므로 fade 도 그곳에는 설치되지 않는다.
 
+macOS 와 Linux 에서 돈다. `job.py` 와 훅이 파일 잠금에 `fcntl` 을 써서, Windows 에서는 훅이 판정하지 않고 지나가고 `job.py` 가 돌지 않는다.
+
 ## 참고한 곳
 
 - [mattpocock/skills](https://github.com/mattpocock/skills): `grill` 은 `grilling`, `debug` 는 `diagnosing-bugs` 에서 출발했다. `code-review` 의 명세 축은 `reviewer` 의 명세 충족으로, `tdd` 의 테스트 기준(기대값은 독립된 상수, 자기 모듈은 목으로 바꾸지 않는다)은 `reviewer` 의 테스트 품질로, `retro` 는 `hardener` 로, `pr` 의 Merge Danger(한쪽 문·양쪽 문, 영향 범위)는 `job.py door` 로 들여왔다.

@@ -81,6 +81,8 @@ claude plugin install fade@fade
 
 桌面应用读取同样的设置，所以用 CLI 安装一次，两边都能用。Claude 云端会话不会读取插件。要在云端使用的仓库，把技能文件夹的副本放进 `.claude/skills/`。副本里没有 `bin/`，所以 `job.py` 按技能文字给出的另一种写法（`python3 "${CLAUDE_SKILL_DIR}/job.py"`）调用。claude.ai 和 Cowork 不安装顶层带 `bin/` 的插件，所以 fade 也装不到那里。
 
+fade 在 macOS 和 Linux 上运行。`job.py` 和钩子用 `fcntl` 加文件锁，所以在 Windows 上钩子不做判断直接放行，`job.py` 也无法运行。
+
 ## 参考
 
 - [mattpocock/skills](https://github.com/mattpocock/skills)：`grill` 源自 `grilling`，`debug` 源自 `diagnosing-bugs`。`code-review` 的规格轴成了 `reviewer` 的规格检查，`tdd` 的测试准则（预期值用独立常量，不 mock 自己的模块）成了 `reviewer` 的测试质量检查，`retro` 成了 `hardener`，`pr` 的 Merge Danger（单向门还是双向门、影响范围）成了 `job.py door`。

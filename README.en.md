@@ -81,6 +81,8 @@ claude plugin install fade@fade
 
 The desktop app reads the same settings, so installing once from the CLI makes it available in both. Claude cloud sessions do not load plugins. For a repo used in the cloud, put a copy of the skill folders in `.claude/skills/`. The copy has no `bin/`, so `job.py` is called in the other form the skill text gives (`python3 "${CLAUDE_SKILL_DIR}/job.py"`). claude.ai and Cowork do not install plugins that have a top-level `bin/`, so fade does not install there.
 
+fade runs on macOS and Linux. `job.py` and the hooks use `fcntl` for file locks, so on Windows the hooks let commands through without judging and `job.py` does not run.
+
 ## Credits
 
 - [mattpocock/skills](https://github.com/mattpocock/skills): `grill` started from `grilling`, and `debug` from `diagnosing-bugs`. The spec axis of `code-review` became `reviewer`'s spec check, `tdd`'s test rules (expected values as independent constants, never mocking your own module) became `reviewer`'s test-quality check, `retro` became `hardener`, and the Merge Danger section of `pr` (one-way or two-way door, blast radius) became `job.py door`.

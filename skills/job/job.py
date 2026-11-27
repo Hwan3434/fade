@@ -85,6 +85,7 @@ FADE_MISTAKES 를 정하지 않은 동안 쓰지 않는다. PR 을 기록하면 
                                          실패한 작업의 보고가 가리킨다
 """
 import contextlib
+import datetime
 import fcntl
 import json
 import os
@@ -129,8 +130,12 @@ def load(cwd):
 
 
 def save(cwd, state):
-    # 데스크톱 앱이 만든 워크트리에서 시작한 뒤 레포 규칙대로 브랜치를 새로 따는 일이 있어, 기록할 때마다 지금 브랜치로 맞춘다
-    state["branch"] = branch(cwd)
+    # 워크트리를 만든 뒤 레포 규칙대로 브랜치를 새로 따거나 이름을 바꾸는 일이 있어, 기록할 때마다 지금 브랜치로 맞춘다.
+    # 앞 이름은 branches 에 남겨, 바꾸기 전에 찍힌 실수 기록의 줄도 이 작업의 줄로 본다
+    now = branch(cwd)
+    if state.get("branch") and state["branch"] != now and state["branch"] not in state.setdefault("branches", []):
+        state["branches"].append(state["branch"])
+    state["branch"] = now
     p = state_path(cwd)
     with open(p + ".tmp", "w", encoding="utf-8") as f:
         json.dump(state, f, ensure_ascii=False, indent=2)
@@ -378,12 +383,17 @@ def main_checkout(cwd):
     return os.path.dirname(common) if r.returncode == 0 and os.path.basename(common) == ".git" else common
 
 
+def skips_default(cwd):
+    """임시 폴더의 레포(테스트, 써 보기)에서 FADE_MISTAKES 를 정하지 않았으면 기본 실수 기록에 손대지 않는다.
+    붙이기(add_mistake), 채우기(fill_pr), 고치기(mark)가 모두 이것을 본다."""
+    return not os.environ.get("FADE_MISTAKES") and under_temp(main_checkout(cwd))
+
+
 def add_mistake(cwd, state, source, what, key=""):
     """실수 기록에 한 줄을 붙인다. 파일과 폴더가 없으면 만든다. 쓴 파일의 경로를 돌려준다.
-    임시 폴더의 레포(테스트, 써 보기)에서 FADE_MISTAKES 를 정하지 않았으면 쓰지 않고 None 을 돌려준다.
-    훅도 이 함수로 쓰니 막는 자리가 여기 하나다."""
+    임시 폴더의 레포에서 FADE_MISTAKES 를 정하지 않았으면 쓰지 않고 None 을 돌려준다. 훅도 이 함수로 쓴다."""
     repo = main_checkout(cwd)
-    if not os.environ.get("FADE_MISTAKES") and under_temp(repo):
+    if skips_default(cwd):
         return None
     row = {"time": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "repo": repo, "branch": branch(cwd),
            "pr": state.get("pr") or "", "source": source, "what": what, "key": key, "handled": ""}
@@ -396,11 +406,12 @@ def add_mistake(cwd, state, source, what, key=""):
 def fill_pr(cwd, state):
     """리뷰 slip 과 승인 창 훅의 줄은 PR 을 열기 전에 찍혀 pr 칸이 빈다. 이 작업(같은 레포, 같은 브랜치,
     작업을 시작한 뒤)의 줄 가운데 pr 이 빈 것에 PR 을 채운다. 같은 브랜치 이름을 다시 쓴 예전 작업의 줄은 건드리지 않는다."""
-    path, repo, now, since = mistakes_path(), main_checkout(cwd), branch(cwd), int(state.get("started") or 0)
-    if not os.path.exists(path):
+    path, repo, since = mistakes_path(), main_checkout(cwd), int(state.get("started") or 0)
+    names = {branch(cwd), *state.get("branches", [])}
+    if skips_default(cwd) or not os.path.exists(path):
         return
     with mistakes_lock(path):
-        rewrite(path, lambda lines: fill_lines(lines, state["pr"], repo, now, since))
+        rewrite(path, lambda lines: fill_lines(lines, state["pr"], repo, names, since))
 
 
 def rewrite(path, change):
@@ -416,17 +427,25 @@ def rewrite(path, change):
         os.replace(path + ".tmp", path)
 
 
-def fill_lines(lines, pr, repo, now, since):
+def seconds(stamp):
+    """실수 기록의 시각. 시간대 오프셋이 있으면 그것으로 읽는다(다른 시간대에서 찍힌 줄). 없으면 이 컴퓨터의 시간대다."""
+    try:
+        return datetime.datetime.strptime(stamp, "%Y-%m-%dT%H:%M:%S%z").timestamp()
+    except ValueError:
+        return time.mktime(time.strptime(stamp[:19], "%Y-%m-%dT%H:%M:%S"))
+
+
+def fill_lines(lines, pr, repo, names, since):
     changed = False
     for i, line in enumerate(lines):
         row = loads(line)
         if not isinstance(row, dict):
             continue
         try:
-            at_ = time.mktime(time.strptime(row["time"][:19], "%Y-%m-%dT%H:%M:%S"))
+            at_ = seconds(row["time"])
         except (KeyError, TypeError, ValueError):
             continue
-        if row.get("pr") or row.get("repo") != repo or row.get("branch") != now or at_ < since:
+        if row.get("pr") or row.get("repo") != repo or row.get("branch") not in names or at_ < since:
             continue
         row["pr"] = pr
         lines[i] = json.dumps(row, ensure_ascii=False)
@@ -437,6 +456,8 @@ def fill_lines(lines, pr, repo, now, since):
 def mark(args):
     if len(args) < 3 or args[1] not in ("key", "handled"):
         sys.exit("job.py mark <줄 번호> key|handled <값>")
+    if skips_default(os.getcwd()):
+        sys.exit("임시 폴더의 레포에서는 FADE_MISTAKES 를 정하지 않으면 기본 실수 기록을 고치지 않는다")
     path = mistakes_path()
     if not os.path.exists(path):
         sys.exit("실수 기록에 없는 줄이다: %s (0줄)" % args[0])
@@ -1007,6 +1028,9 @@ def main(argv):
         nth = sum(1 for r in mistake_rows() if r.get("key") == key) if written else 0
         said = "%s(%s, key %s%s): %s" % ("실수 기록에 남겼다" if written else NOT_WRITTEN, source, key,
                                        ", 이 key 의 %d번째" % nth if nth else "", brief(what))
+        if written and keys and key not in keys:  # 처음부터 key 를 주면 같은 실수에 새 이름을 지을 수 있다
+            said += ("\n새 key 다. 있는 key: %s. 그 가운데 같은 실수가 있으면 job.py mark <줄 번호> key <있는 key> 로 고친다"
+                     % ", ".join(keys[:30]))
     elif cmd == "pr":
         state["pr"] = args[0]
         save(cwd, state)  # PR 기록이 먼저다. 실수 기록 채우기가 실패해도 PR 은 남는다
