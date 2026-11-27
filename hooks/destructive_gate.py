@@ -17,18 +17,19 @@ import merge_gate  # noqa: E402
 SAFE_DEVICES = {"/dev/null", "/dev/stdout", "/dev/stderr"}
 GIT_VALUE_OPTIONS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace"}
 PUSH_VALUE_OPTIONS = {"-o", "--push-option", "--repo", "--receive-pack", "--exec"}
+WRAPPERS = {"sudo", "env", "command", "exec", "nohup", "time", "!", "{", "if", "then", "elif", "else", "while", "until", "do"}
 
 
 def resolve(arg, cwd, home):
-    """rm 인자를 셸이 펼칠 절대 경로로 바꾼다. `*` 와 끝의 `/*` 는 그 폴더 전체로 본다."""
+    """인자를 셸이 펼칠 절대 경로로 바꾼다. 끝 이름이 글롭(`*`, `.*`, `id_*`)이면 그 폴더 안 전부로 보고 폴더를 돌려준다."""
     for var in ("${HOME}", "$HOME", "~"):
         if arg == var or arg.startswith(var + "/"):
             arg = home + arg[len(var):]
             break
-    if arg == "*" or arg.endswith("/*"):
-        arg = arg[:-1]
     path = os.path.normpath(os.path.join(cwd, arg))
-    return "/" + path.lstrip("/") if path.startswith("//") else path
+    if path.startswith("//"):
+        path = "/" + path.lstrip("/")
+    return os.path.dirname(path) if any(ch in os.path.basename(path) for ch in "*?[") else path
 
 
 def wipes_home(path, home):
@@ -81,10 +82,14 @@ def push_problem(args, cwd):
                 cwd = os.path.join(cwd, os.path.expanduser(value))
     if not args or args[0] != "push":
         return None
-    force, positional, rest = False, [], args[1:]
+    force, every, positional, rest = False, False, [], args[1:]
     while rest:
         a = rest.pop(0)
-        if a in PUSH_VALUE_OPTIONS:
+        if a == "--mirror":
+            force = every = True  # mirror 는 옵션 없이도 모든 브랜치를 강제로 맞춘다
+        elif a in ("--all", "--branches"):
+            every = True
+        elif a in PUSH_VALUE_OPTIONS:
             rest = rest[1:]
         elif a == "--force" or a.startswith("--force-with-lease"):
             force = True
@@ -94,6 +99,8 @@ def push_problem(args, cwd):
             force = force or "f" in a
         else:
             positional.append(a)
+    if force and every:
+        return "기본 브랜치를 포함한 모든 브랜치의 force push"
     refspecs = positional[1:]
     forced = (refspecs or ["HEAD"]) if force else [r for r in refspecs if r.startswith("+")]
     if not forced:
@@ -111,15 +118,19 @@ def push_problem(args, cwd):
 
 
 def problem(command, cwd, home):
-    """막을 명령이면 (무엇, 그 조각), 아니면 None."""
+    """막을 명령이면 (무엇, 그 조각), 아니면 None. 같은 명령 줄 안의 cd 는 따라가 상대 경로를 푼다."""
     for seg in merge_gate.segments(command):
-        while seg and seg[0] == "sudo":
-            seg = seg[1:]
+        while seg and (seg[0] in WRAPPERS or ("=" in seg[0] and not seg[0].startswith("-"))):
+            seg = seg[1:]  # 셸 예약어, 명령을 감싸는 명령, 그 뒤의 환경 변수 지정
         if not seg:
             continue
         name, args = os.path.basename(seg[0]), seg[1:]
         found = None
-        if name == "rm":
+        if name == "cd":
+            target = args[-1] if args else "~"
+            if target != "-":
+                cwd = resolve(target, cwd, home)
+        elif name == "rm":
             found = rm_problem(args, cwd, home)
         elif name == "git":
             found = push_problem(args, cwd)

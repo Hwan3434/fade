@@ -55,7 +55,7 @@ The goal is to delete prose as models get smarter until no lines are left, hence
 Subagents that the skills start. Their definitions are in `agents/`.
 
 - `reviewer`: the spec-axis reviewer for `job`. It does not trust the implementer's report; it checks the plan against the diff item by item, looking first at whether the spec is met (missing, extra, misunderstood) and then at test quality. Each finding is marked blocking or minor. Its tools are read-only (Read, Grep, Glob).
-- `tester`: uses the result the way a user would and only reports. It writes scenarios first and leaves screens and output under `fade-try/` in the worktree's git directory. It has no tools that edit files.
+- `tester`: uses the result the way a user would and only reports. It writes scenarios first and leaves screens and output under `fade-try/` in the worktree's git directory. Its editing tools (Edit, Write, NotebookEdit) are removed.
 - `hardener`: groups the mistakes of finished work in the mistake log by key, and when the same key shows up twice or more, or the mistake could happen to anyone, proposes a check in `harden`'s order. It only proposes and does not fix.
 
 ## Structure

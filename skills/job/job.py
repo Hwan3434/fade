@@ -20,7 +20,8 @@ stop 과 slip, 그리고 병합 훅과 승인 창 훅이 막을 때 한 줄씩 �
   job.py human   <사람이 볼 것>           사람만 판정할 수 있는 것이 남았을 때. 직접 써 보기를 대신하고, 병합을 막는다
   job.py review-files <base>             명세 축 리뷰어에게 줄 show 출력과 base 와의 diff 를 워크트리 안
                                          .fade-review/ (git 이 무시하는 폴더)에 쓴다. 계획서 원문은 부르는 쪽이 plan.md 로 쓴다
-  job.py review  <남은 지적 수> [<요약>]  코드 리뷰 결과. 지금 커밋에서 남은 막는 지적이 0 이어야 병합한다
+  job.py review  <남은 막는 지적 수> [<요약>]
+                                         코드 리뷰 결과. 지금 커밋에서 남은 막는 지적이 0 이어야 병합한다
   job.py door    one-way|two-way <이유와 영향 범위>
                                          되돌릴 수 있는가. 기록이 없거나 one-way(한쪽 문)면 병합을 막는다
   job.py stop    <이유>                  해결하지 못했거나 사용자 결정이 필요해 멈춘다. 병합을 막고 실수 기록에 남긴다
@@ -187,11 +188,11 @@ def missing(state, cwd):
         out.append("한쪽 문(되돌릴 수 없음): %s. 병합은 사용자가 정한다" % door["why"])
     review = state.get("review")
     if not review:
-        out.append("리뷰: 기록이 없다. 코드 리뷰를 돌리고 job.py review <남은 지적 수> 로 남긴다")
+        out.append("리뷰: 기록이 없다. 코드 리뷰를 돌리고 job.py review <남은 막는 지적 수> 로 남긴다")
     elif review["head"] != now or review.get("dirty"):
         out.append("리뷰: 마지막 커밋(%s)에서 커밋 전 변경 없이 다시 하지 않았다" % s)
     elif review["left"]:
-        out.append("리뷰: 남은 지적 %d개" % review["left"])
+        out.append("리뷰: 남은 막는 지적 %d개" % review["left"])
     for h in state["human"]:
         out.append("사람이 볼 것: " + h)
     return out
@@ -242,7 +243,7 @@ def show(state, cwd, full=False):
         lines.append("- 되돌릴 수 있는가: %s — %s" % ("한쪽 문" if door["kind"] == "one-way" else "양쪽 문", door["why"]))
     review = state.get("review")
     if review:
-        lines.append("- 리뷰(%s): 남은 지적 %d개%s" % (at(review), review["left"], " — " + review["note"] if review["note"] else ""))
+        lines.append("- 리뷰(%s): 남은 막는 지적 %d개%s" % (at(review), review["left"], " — " + review["note"] if review["note"] else ""))
     if state["pr"]:
         lines.append("- PR: " + state["pr"])
     if state["merged"]:
@@ -351,7 +352,7 @@ def main(argv):
         state["human"].append(args[0])
     elif cmd == "review":
         if not args[0].isdigit():
-            sys.exit("남은 지적 수는 0 이상의 정수다")
+            sys.exit("남은 막는 지적 수는 0 이상의 정수다")
         state["review"] = {"left": int(args[0]), "note": " ".join(args[1:2]), **where(cwd)}
     elif cmd == "door":
         if args[0] not in ("one-way", "two-way") or not args[1].strip():
