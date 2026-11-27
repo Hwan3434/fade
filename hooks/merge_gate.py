@@ -257,7 +257,8 @@ def problems(command, cwd):
     out = []
     for here, seg in located(command, cwd):
         if len(seg) >= 3 and os.path.basename(seg[0]) == "gh" and seg[1:3] == ["pr", "merge"]:
-            found = gh_target(here, seg[3:])
+            # cd 대상이 레포 밖이거나 펼쳐지지 않은 글자($WT)여서 못 찾으면 세션 폴더의 기록을 본다(예전 동작)
+            found = gh_target(here, seg[3:]) or (here != cwd and gh_target(cwd, seg[3:]))
             if found:
                 state, wt = found
                 left = job.missing(state, wt) + [p for p in (ci_problem(wt, seg[3:]), head_problem(wt, seg[3:])) if p]
