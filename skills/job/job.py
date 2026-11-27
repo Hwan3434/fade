@@ -585,7 +585,7 @@ def main(argv):
         said = "증거를 기록했다: 「%s」 ← %s → 종료 코드 %d (%s, 로그 %s)" % (brief(args[0]), name_of(record), code,
                                                                   taken(record), path)
         if code:  # 실패한 명령은 원인을 알 만큼 끝을 보인다. 성공한 명령의 출력은 로그 파일에만 둔다
-            said += "\n종료 코드가 0 이 아니라 출력 끝 %d줄을 붙인다(전체는 로그 파일):\n%s" % (TAIL, tail_of(out))
+            said += "\n종료 코드가 0 이 아니라 출력 끝(%d줄까지)을 붙인다. 전체는 로그 파일에 있다:\n%s" % (TAIL, tail_of(out))
     elif cmd == "tried":
         record = {"what": args[0], "files": need_files(args[1:]), "paths": repo_paths(cwd, paths), **where(cwd)}
         put(state["tried"], record, ("what",))
