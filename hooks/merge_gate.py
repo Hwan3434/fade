@@ -61,15 +61,44 @@ def without_comments(command):
     return "".join(out)
 
 
-ANSI_C = re.compile(r"\$'(?:[^'\\]|\\.)*'")
+def without_ansi_c(command):
+    """따옴표 밖에서 시작하는 bash 의 $'...' 를 빈 따옴표로 바꾼다. shlex 가 못 읽는 꼴이라서다. 작은따옴표나
+    큰따옴표 안의 $' 와 주석은 그대로 둔다(주석 속 작은따옴표에 따옴표 상태가 흔들리지 않게 주석은 건너뛴다).
+    닫히지 않은 $' 는 그대로 둬 shlex 가 해석하지 못했다고 알리게 한다."""
+    out, quote, prev, i, n = [], None, "\n", 0, len(command)
+    while i < n:
+        c = command[i]
+        if quote is None and c == "#" and (prev.isspace() or prev in PUNCTUATION):
+            end = command.find("\n", i)
+            end = n if end < 0 else end
+            out.append(command[i:end])
+            prev, i = "#", end
+            continue
+        if quote is None and command.startswith("$'", i):
+            j = i + 2
+            while j < n and command[j] != "'":
+                j += 2 if command[j] == "\\" else 1
+            if j < n:
+                out.append("''")
+                prev, i = "'", j + 1
+                continue
+        if c == "\\" and quote != "'" and i + 1 < n:
+            out.append(command[i:i + 2])
+            prev, i = "\\", i + 2
+            continue
+        if c in "'\"" and quote in (None, c):
+            quote = None if quote else c
+        out.append(c)
+        prev, i = c, i + 1
+    return "".join(out)
 
 
 def segments(command):
     """명령 줄을 실제로 실행될 단순 명령 조각(토큰 목록)들로 나눈다. 앞에 붙은 환경 변수 지정은 뗀다.
     인용된 글자, heredoc 본문, 주석은 명령으로 치지 않는다. 해석하지 못하면 ValueError.
     shlex 가 못 읽는 bash 의 $'...' 는 빈 따옴표로 바꿔 읽는다. 인용된 글자라 명령으로 치지 않는 것은 같다."""
-    command = ANSI_C.sub("''", command)
-    lex = shlex.shlex(without_comments(without_heredoc_bodies(command)), posix=True, punctuation_chars=PUNCTUATION)
+    lex = shlex.shlex(without_comments(without_ansi_c(without_heredoc_bodies(command))), posix=True,
+                      punctuation_chars=PUNCTUATION)
     lex.whitespace_split = True
     lex.whitespace = " \t\r"  # 줄바꿈은 명령을 나누는 글자로 읽는다
     lex.commenters = ""
