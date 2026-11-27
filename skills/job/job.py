@@ -91,6 +91,7 @@ TAIL = 40
 # 명령마다 받는 옵션. 여기 없는 명령은 옵션을 받지 않는다. --paths 는 뒤에 경로들을 받는다
 OPTIONS = {"start": ("--pr-only", "--unattended"), "review": ("--minor", "--spec", "--dropped"), "show": ("--full", "--save"),
            "evidence": ("--paths",), "log": ("--paths",), "tried": ("--paths",), "drop": ("--tried",)}
+VALUED = ("--dropped",)  # --이름=값 꼴로 값을 받는 옵션. 나머지 옵션에 = 이 붙으면 모르는 옵션이다
 OPTION = re.compile(r"--\S+")  # 띄어쓰기가 든 글(「--unattended 를 고친다」)은 옵션이 아니다
 COMMANDS = re.findall(r"^  job\.py (\S+)", __doc__, re.M)
 
@@ -219,7 +220,9 @@ def parse(cmd, args):
     맨 처음 나온 -- 뒤의 인자는 모두 값이다. -- 로 시작하는 한 단어를 제목, 요약, 이유로 넣는 자리다."""
     end = args.index("--") if "--" in args else len(args)
     head, tail = args[:end], args[end + 1:]
-    unknown = [a for a in head if OPTION.fullmatch(a) and a.split("=", 1)[0] not in OPTIONS.get(cmd, ())]
+    known = OPTIONS.get(cmd, ())
+    unknown = [a for a in head if OPTION.fullmatch(a) and a not in known
+               and not (a.split("=", 1)[0] in VALUED and a.split("=", 1)[0] in known)]
     if unknown:
         sys.exit("모르는 옵션: %s\n%s" % (", ".join(unknown), usage(cmd)))
     paths = None
