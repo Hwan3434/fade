@@ -95,6 +95,47 @@ class GateTest(unittest.TestCase):
         result = "\n".join("%6d\t%s" % (i, lines[i - 1]) for i in range(first, last + 1))
         self.t.tool("Read", dict({"file_path": self.patch}, **extra), result=result, path=path)
 
+    def test_끝_줄이_앞줄과_같아도_앞부분만_읽은_것은_받지_않는다(self):
+        # 줄을 집합으로 견주면 앞에서 본 같은 글자의 줄이 끝 줄을 덮는다. 같은 줄은 나온 횟수만큼 보여야 한다
+        commit_file(self.cwd, "a.py", "a = 2\n" + "pass  # 같은 줄\n" * 6, "반복")
+        self.assertEqual(job(self.cwd, "review-files", "main").returncode, 0)
+        with open(self.patch, encoding="utf-8") as f:
+            n = len(f.read().splitlines())
+        self.t.prompt(MARKER)
+        self.read_patch(shown=(1, n - 3))  # head 처럼 끝 세 줄을 빼고 읽었다
+        self.assertIn("a.py", self.denied())
+        self.read_patch()
+        self.assertIsNone(self.gate())
+
+    def test_접두어를_뗀_내용만_읽은_것은_diff_를_읽은_것이_아니다(self):
+        # 바뀐 파일을 cat 으로 읽으면 +, -, 공백 접두어가 없다. 접두어까지 견줘야 diff 를 읽었다고 친다
+        text = "\n".join(l[1:] if l[:1] in "+- " and not l.startswith(("+++", "---")) else l
+                         for l in self.patch_text().splitlines())
+        self.t.prompt(MARKER)
+        self.t.tool("Bash", {"command": "cat a.py"}, result=text)
+        self.denied()
+
+    def test_앞_리뷰_전에_읽은_것은_다음_리뷰의_증거가_아니다(self):
+        commit_file(self.cwd, "a.py", "a = 3\n", "고침")
+        self.assertEqual(job(self.cwd, "review-files", "main").returncode, 0)
+        self.t.prompt(MARKER)
+        self.read_patch()
+        time.sleep(0.01)
+        self.assertEqual(job(self.cwd, "review", "1", "막는 지적 하나").returncode, 0)  # 이 리뷰 뒤로 자른다
+        commit_file(self.cwd, "b.py", "b = 1\n", "고친 커밋")
+        self.assertEqual(job(self.cwd, "review-files", "main").returncode, 0)
+        self.assertIn("code-review", self.denied())  # 앞 리뷰 전의 code-review 와 출력은 치지 않는다
+
+    def test_같은_커밋에서_리뷰를_다시_남기면_앞_리뷰가_본_것으로_받는다(self):
+        # --dropped 를 빠뜨려 같은 커밋에서 다시 적는 경우. 새 커밋이 없으니 앞 리뷰를 받은 그 읽기로 판정한다
+        self.t.prompt(MARKER)
+        self.read_patch()
+        self.assertIsNone(self.gate())
+        time.sleep(0.01)
+        self.assertEqual(job(self.cwd, "review", "1", "막는 지적 하나").returncode, 0)
+        time.sleep(0.01)
+        self.assertIsNone(self.gate("job.py review 0 \"오탐 하나\" --dropped=1"))
+
     def test_review_files_가_버그_축의_patch_를_쓴다(self):
         with open(self.patch, encoding="utf-8") as f:
             self.assertIn("+a = 2", f.read())
@@ -466,6 +507,16 @@ class DropTest(unittest.TestCase):
     def test_새_지적이_나와_수가_늘거나_같으면_흔적이_없어도_된다(self):
         self.assertEqual(self.review("3", "새 지적이 하나 더").returncode, 0)
         self.assertEqual(self.review("3", "그대로").returncode, 0)
+
+    def test_앞_리뷰_전의_slip_과_red_는_고친_흔적이_아니다(self):
+        job(self.cwd, "slip", "review", "k", "앞 리뷰 전에 고침", env=self.env)
+        self.assertEqual(job(self.cwd, "red", "false").returncode, 0)
+        time.sleep(0.01)
+        self.assertEqual(self.review("2", "그대로").returncode, 0)
+        time.sleep(0.01)
+        r = self.review("0", "다 고쳤다")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("slip", r.stderr)
 
     def test_값을_받는_옵션만_이름_등호_값_꼴을_받는다(self):
         r = job(self.cwd, "review", "2", "x", "--spec=1")
