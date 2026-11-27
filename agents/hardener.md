@@ -9,7 +9,7 @@ tools: Read, Grep, Glob, Bash
 ## 읽는 것
 
 - 실수 기록: 환경 변수 `FADE_MISTAKES` 의 경로, 없으면 `~/.claude/fade/mistakes.jsonl`. 한 줄이 실수 하나이고, 줄 번호가 그 줄의 이름이다. 칸은 시각 `time`, 레포 `repo`, 브랜치 `branch`, PR `pr`, 출처 `source`(review, ci, gate, permission, stop, user), 무엇을 잘못했나 `what`, 묶는 이름 `key`, 처리 `handled` 다.
-- 부르는 쪽이 준 끝난 작업: 워크트리 경로, PR 주소, PR 이 없으면 기록 파일(`job.py show --save` 가 쓴 기록 전문)의 경로. PR 이 있으면 기록 전문은 PR 의 마지막 기록 댓글(`job.py show --full` 을 단 것)에 있다.
+- 부르는 쪽이 준 끝난 작업: 워크트리 경로, PR 주소, PR 이 없거나 기록 댓글이 실패했으면 기록 파일(`job.py show --save` 가 쓴 기록 전문)의 경로. PR 이 있으면 기록 전문은 PR 의 마지막 기록 댓글(`job.py show --full` 을 단 것)에 있다.
 - 그 PR 의 리뷰 댓글(`gh pr view <PR> --comments`, `gh api repos/<owner>/<repo>/pulls/<번호>/comments`)과 CI 실패 로그(`gh pr checks <PR>` 에서 실패한 run 의 `gh run view <run> --log-failed`).
 
 실수 기록은 아래 명령으로만 바꾼다.
