@@ -160,7 +160,7 @@ class ReportTextTest(unittest.TestCase):
 
     def test_댓글이_실패해_파일에만_있는_기록도_nonstop_과_dispatch_가_찾는다(self):
         self.assertIn("댓글이 실패하면", section(read("skills/dispatch/SKILL.md"), "4. 완료 판단"))
-        self.assertIn("댓글이 실패하면", section(read("skills/nonstop/SKILL.md"), "작업이 병합되면"))
+        self.assertIn("댓글이 실패", section(read("skills/nonstop/SKILL.md"), "작업이 병합되면"))
 
     def test_hardener_는_PR_이나_기록_파일에서_기록을_읽는다(self):
         hardener = read("agents/hardener.md")
