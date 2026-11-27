@@ -294,9 +294,12 @@ def mistake_rows():
 def mask(text):
     """공개 PR 에도 붙는 글에서 사용자 이름이 든 홈 경로를 줄인다. Claude 가 경로로 만드는 폴더 이름
     (세션 임시 폴더, 세션 기록 폴더)은 영숫자가 아닌 글자를 모두 - 로 바꾼 꼴(-Users-<이름>-)이라 그것도 가린다."""
-    home = os.path.expanduser("~")
+    home = os.path.expanduser("~").rstrip("/")
+    if not home:  # 홈이 / 면 가릴 이름이 없다
+        return text
     dashed = re.sub(r"[^A-Za-z0-9]", "-", home)
-    text = text.replace(home, "~")
+    # 이름 뒤가 이름에 쓰이는 글자면 다른(더 긴 이름의) 사용자다
+    text = re.sub(re.escape(home) + r"(?![A-Za-z0-9._-])", "~", text)
     return re.sub(re.escape(dashed) + r"(?![A-Za-z0-9])", "-~", text)
 
 
