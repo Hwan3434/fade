@@ -117,6 +117,11 @@ class OtherFolderTest(Repo):
     def test_cd_로_워크트리에_들어가_gh_pr_merge_해도_본다(self):
         self.denied("cd %s && gh pr merge 3 --squash" % self.wt, self.outside.name)
 
+    def test_명령이_가리키는_폴더에_기록이_없으면_세션_폴더의_기록을_본다(self):
+        for command in ("cd %s && gh pr merge 3 --repo o/r" % self.outside.name, "cd $WT && gh pr merge 3",
+                        'cd "$(git rev-parse --show-toplevel)" && gh pr merge 3'):
+            self.assertEqual(self.gate(command, self.wt, branch="feat/none")["permissionDecision"], "deny", command)
+
     def test_PR_브랜치의_워크트리가_없으면_말하지_않는다(self):
         self.assertIsNone(self.gate("gh pr merge 3 --squash", self.main, branch="feat/none"))
 
