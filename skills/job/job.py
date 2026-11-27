@@ -691,8 +691,9 @@ def review_files(cwd, state, base):
     since = review.get("spec_head")
     since = since if since and is_ancestor(cwd, since, now) else None
     spec_range = [since, "HEAD"] if since else [base + "...HEAD"]
-    # 버그 축은 앞 리뷰(받은 것)가 본 커밋 뒤를, 앞 리뷰가 없거나 그 커밋이 사라졌으면 base 와의 전체를 본다
-    last = review.get("head")
+    # 버그 축은 앞 리뷰(받은 것)가 본 커밋 뒤를, 앞 리뷰가 없거나 그 커밋이 사라졌으면 base 와의 전체를 본다.
+    # 앞 리뷰와 같은 커밋이면(리뷰를 다시 남기는 경우) 앞 리뷰의 bug.patch 와 같은 범위다
+    last = review.get("bug_from") if review.get("head") == now else review.get("head")
     last = last if last and is_ancestor(cwd, last, now) else None
     bug_range = [last, "HEAD"] if last else [base + "...HEAD"]
     bug_names = changed(top, *bug_range)
@@ -958,8 +959,15 @@ def main(argv):
                          "고친 막는 지적마다 slip review 로 남긴다. 오탐이나 계획서의 결정과 어긋나 수에서 뺐으면 "
                          "--dropped=<수> 로 적고 이유를 요약에 쓴다" % prev["left"])
         # spec_head 는 명세 리뷰어가 마지막으로 본 커밋이다. 다음 review-files 가 그 뒤의 diff 만 준다
+        # after 는 이 리뷰의 버그 축을 판정한 세션 기록의 시작이다. 같은 커밋에서 다시 남기면 앞 리뷰의 것을 물려받아,
+        # 리뷰 훅이 앞 리뷰가 본 code-review 로 판정한다
+        # bug_from 은 이 리뷰의 bug.patch 가 시작한 커밋(없으면 base 와의 전체)이다. 같은 커밋에서 다시 만든 bug.patch 가
+        # 비지 않고 앞 리뷰가 본 것과 같게 한다
+        same = bool(prev) and prev.get("head") == now
+        after = prev.get("after", since) if same else since
+        bug_from = prev.get("bug_from") if same else prev.get("head")
         state["review"] = {"left": int(args[0]), "note": note, "spec_head": spec_head, "minor": minor, "spec": spec,
-                           "dropped": dropped, "at": time.time(), **where(cwd)}
+                           "dropped": dropped, "at": time.time(), "after": after, "bug_from": bug_from, **where(cwd)}
         said = "리뷰를 기록했다: 남은 막는 지적 %d개 (커밋 %s%s)" % (
             int(args[0]), at(state["review"]), ", 사소한 지적을 모아 고친 커밋의 버그 축" if minor else
             ", 명세 리뷰어도 봄" if spec else "")

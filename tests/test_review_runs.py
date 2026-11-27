@@ -109,22 +109,22 @@ class GateTest(unittest.TestCase):
 
     def test_접두어를_뗀_내용만_읽은_것은_diff_를_읽은_것이_아니다(self):
         # 바뀐 파일을 cat 으로 읽으면 +, -, 공백 접두어가 없다. 접두어까지 견줘야 diff 를 읽었다고 친다
-        text = "\n".join(l[1:] if l[:1] in "+- " and not l.startswith(("+++", "---")) else l
-                         for l in self.patch_text().splitlines())
+        text = "\n".join(l[1:] if l[:1] in "+- " else l for l in self.patch_text().splitlines())
         self.t.prompt(MARKER)
         self.t.tool("Bash", {"command": "cat a.py"}, result=text)
         self.denied()
 
     def test_앞_리뷰_전에_읽은_것은_다음_리뷰의_증거가_아니다(self):
-        commit_file(self.cwd, "a.py", "a = 3\n", "고침")
-        self.assertEqual(job(self.cwd, "review-files", "main").returncode, 0)
+        early = time.time()
         self.t.prompt(MARKER)
-        self.read_patch()
         time.sleep(0.01)
         self.assertEqual(job(self.cwd, "review", "1", "막는 지적 하나").returncode, 0)  # 이 리뷰 뒤로 자른다
         commit_file(self.cwd, "b.py", "b = 1\n", "고친 커밋")
         self.assertEqual(job(self.cwd, "review-files", "main").returncode, 0)
-        self.assertIn("code-review", self.denied())  # 앞 리뷰 전의 code-review 와 출력은 치지 않는다
+        # 앞 리뷰 전에 찍힌 출력에 새 bug.patch 의 줄이 다 들어 있어도 치지 않는다
+        self.t._write(self.t.path, {"type": "user", "timestamp": iso(early), "message": {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "x", "content": self.patch_text()}]}})
+        self.assertIn("code-review", self.denied())
 
     def test_같은_커밋에서_리뷰를_다시_남기면_앞_리뷰가_본_것으로_받는다(self):
         # --dropped 를 빠뜨려 같은 커밋에서 다시 적는 경우. 새 커밋이 없으니 앞 리뷰를 받은 그 읽기로 판정한다
@@ -380,13 +380,20 @@ class GateTest(unittest.TestCase):
         self.assertIn("bug.patch 가 비었다", r.stdout)
         self.assertIsNone(self.gate())
 
-    def test_같은_커밋에서_다시_만든_빈_bug_patch_는_code_review_없이_받지_않는다(self):
+    def test_같은_커밋에서_다시_만든_bug_patch_는_앞_리뷰가_본_범위라_비지_않는다(self):
+        # 비면 code-review 없이 받힐 수 있다. 앞 리뷰와 같은 범위로 다시 만들어, 앞 리뷰가 본 code-review 로 판정한다
+        before = self.patch_text()
         self.t.prompt(MARKER)
         self.read_patch()
         self.assertEqual(job(self.cwd, "review", "0", "버그 축만").returncode, 0)
         time.sleep(0.01)
         job(self.cwd, "review-files", "main")
-        self.assertEqual(self.patch_text(), "")
+        self.assertEqual(self.patch_text(), before)
+        self.assertIsNone(self.gate())
+
+    def test_같은_커밋의_다시_남기기도_앞_리뷰_뒤의_code_review_가_없으면_받지_않는다(self):
+        self.assertEqual(job(self.cwd, "review", "0", "버그 축만").returncode, 0)  # 훅 없이 남긴 리뷰
+        time.sleep(0.01)
         self.assertIn("code-review 가 돈 흔적이 없다", self.denied())
 
     def test_job_과_무관한_명령은_해석하지_못해도_조용하다(self):
