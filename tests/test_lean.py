@@ -500,6 +500,7 @@ class MinorReviewTest(ReviewBase):
         self.assertEqual(job(self.cwd, "review", "1", "막는 지적 하나", "--minor").returncode, 0)
         self.assertIn("남은 막는 지적 1개", self.check())
         commit_file(self.cwd, "src/fix.py", "막는 지적 수정\n")
+        job(self.cwd, "slip", "review", "k", "막는 지적을 고쳤다")  # 줄어든 막는 지적에는 고친 흔적이 있어야 한다
         out, diff = self.review_files()
         self.assertIn("고친 부분", out)
         self.assertIn("+사소한 수정", diff)  # 명세 리뷰어가 보지 못한 사소한 수정 커밋도 담는다

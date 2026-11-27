@@ -40,13 +40,18 @@ FADE_MISTAKES 를 정하지 않은 동안 쓰지 않는다. PR 을 기록하면 
   job.py drop    <완료 기준> | --tried    그 기준에 붙인 증거를, --tried 면 써 보기를 모두 지운다
   job.py try-na  <이유>                  써 볼 화면도 명령도 없는 작업일 때
   job.py human   <사람이 볼 것>           사람만 판정할 수 있는 것이 남았을 때. 직접 써 보기를 대신하고, 병합을 막는다
-  job.py review-files <base>             명세 리뷰어를 띄울지 판단할 재료를 알린다. 첫 줄은 base 와의 diff 의 파일 수와 줄 수
+  job.py review-files <base>             버그 축이 볼 bug.patch(앞 리뷰가 없으면 base 와의 전체, 있으면 그 리뷰의
+                                         커밋 뒤)를 쓰고, 명세 리뷰어를 띄울지 판단할 재료를 알린다. 첫 줄은 base 와의 diff 의 파일 수와 줄 수
                                          (더한 줄 + 뺀 줄), 셋째 줄부터는 파일마다 더한 줄, 뺀 줄, 경로다. 명세 리뷰어에게 줄 show
                                          출력과 diff 를 워크트리 안 .fade-review/ (git 이 무시하는 폴더)에 쓴다. 명세 리뷰어가 본
                                          커밋이 있으면 그 뒤에 고친 부분만, 없으면 base 와의 전체를 쓴다(둘째 줄이 어느 쪽인지 알린다).
                                          계획서 원문은 부르는 쪽이 plan.md 로 쓴다
-  job.py review  <남은 막는 지적 수> [<요약>] [--spec | --minor]
-                                         코드 리뷰 결과. 지금 커밋에서 남은 막는 지적이 0 이어야 병합한다
+  job.py review  <남은 막는 지적 수> [<요약>] [--spec | --minor] [--dropped=<수>]
+                                         코드 리뷰 결과. 지금 커밋에서 남은 막는 지적이 0 이어야 병합한다.
+                                         앞 리뷰보다 수가 줄었으면 그 사이 slip 이나 새 red 가 있어야 받는다. 오탐이나
+                                         계획서의 결정과 어긋나 고치지 않고 수에서 뺀 막는 지적은 --dropped=<수> 로 적는다
+                                         (줄어든 수가 뺀 수 이하면 흔적이 없어도 받는다). fade 훅(review_gate)은 버그 축이
+                                         diff 를 실제로 읽었는지 세션 기록에서 본다
                                          --spec 은 이 커밋에서 만든 review-files 의 입력으로 명세 리뷰어도 봤다는 뜻이다.
                                          --spec 도 --minor 도 없으면 명세 리뷰어를 띄우지 않은 이유를 요약에 적어야 받는다
                                          --minor 는 막는 지적이 0 이 된 뒤 사소한 지적을 한 커밋으로 고치고, 그 커밋의 diff 만
@@ -84,7 +89,7 @@ import time
 
 TAIL = 40
 # 명령마다 받는 옵션. 여기 없는 명령은 옵션을 받지 않는다. --paths 는 뒤에 경로들을 받는다
-OPTIONS = {"start": ("--pr-only", "--unattended"), "review": ("--minor", "--spec"), "show": ("--full", "--save"),
+OPTIONS = {"start": ("--pr-only", "--unattended"), "review": ("--minor", "--spec", "--dropped"), "show": ("--full", "--save"),
            "evidence": ("--paths",), "log": ("--paths",), "tried": ("--paths",), "drop": ("--tried",)}
 OPTION = re.compile(r"--\S+")  # 띄어쓰기가 든 글(「--unattended 를 고친다」)은 옵션이 아니다
 COMMANDS = re.findall(r"^  job\.py (\S+)", __doc__, re.M)
@@ -214,7 +219,7 @@ def parse(cmd, args):
     맨 처음 나온 -- 뒤의 인자는 모두 값이다. -- 로 시작하는 한 단어를 제목, 요약, 이유로 넣는 자리다."""
     end = args.index("--") if "--" in args else len(args)
     head, tail = args[:end], args[end + 1:]
-    unknown = [a for a in head if OPTION.fullmatch(a) and a not in OPTIONS.get(cmd, ())]
+    unknown = [a for a in head if OPTION.fullmatch(a) and a.split("=", 1)[0] not in OPTIONS.get(cmd, ())]
     if unknown:
         sys.exit("모르는 옵션: %s\n%s" % (", ".join(unknown), usage(cmd)))
     paths = None
@@ -571,9 +576,10 @@ def show(state, cwd, full=False):
         lines.append("- 되돌릴 수 있는가: %s — %s" % ("한쪽 문" if door["kind"] == "one-way" else "양쪽 문", door["why"]))
     review = state.get("review")
     if review:
-        lines.append("- 리뷰(%s%s): 남은 막는 지적 %d개%s" % (
+        lines.append("- 리뷰(%s%s): 남은 막는 지적 %d개%s%s" % (
             at(review), ", 사소한 지적을 모아 고친 커밋의 버그 축" if review.get("minor") else
             ", 명세 리뷰어도 봄" if review.get("spec") else "", review["left"],
+            ", 뺀 막는 지적 %d개" % review["dropped"] if review.get("dropped") else "",
             " — " + review["note"] if review["note"] else ""))
     if state["pr"]:
         lines.append("- PR: " + state["pr"])
@@ -598,9 +604,15 @@ def review_files(cwd, state, base):
     since = since if since and is_ancestor(cwd, since, now) else None
     r = subprocess.run(["git", "diff", since, "HEAD"] if since else ["git", "diff", base + "...HEAD"], cwd=cwd,
                        capture_output=True, text=True)
+    # 버그 축은 앞 리뷰(받은 것)가 본 커밋 뒤를, 앞 리뷰가 없거나 그 커밋이 사라졌으면 base 와의 전체를 본다
+    last = review.get("head")
+    last = last if last and is_ancestor(cwd, last, now) else None
+    bug = subprocess.run(["git", "diff", last, "HEAD"] if last else ["git", "diff", base + "...HEAD"], cwd=cwd,
+                         capture_output=True, text=True)
     folder = os.path.join(top_dir(cwd), ".fade-review")
     os.makedirs(folder, exist_ok=True)
-    for name, text in ((".gitignore", "*\n"), ("show.txt", show(state, cwd) + "\n"), ("diff.patch", r.stdout)):
+    for name, text in ((".gitignore", "*\n"), ("show.txt", show(state, cwd) + "\n"), ("diff.patch", r.stdout),
+                       ("bug.patch", bug.stdout)):
         with open(os.path.join(folder, name), "w", encoding="utf-8") as f:
             f.write(text)
     state["review_files"] = {"head": now, "dirty": dirty(cwd)}
@@ -704,7 +716,7 @@ def main(argv):
         if state["red"]:
             state.setdefault("red_history", []).append(state["red"])
         state["red"] = {"cmd": args[0], "code": code, "head": head(cwd), "dirty": dirty(cwd), "tail": tail_of(out),
-                        "pending": pending(cwd)}
+                        "pending": pending(cwd), "at": time.time()}
         state["green"] = None
         said = "red 를 기록했다: %s → 종료 코드 %d (커밋 %s)" % (name_of(state["red"]), code, at(state["red"]))
         # 실패 이유가 아직 구현이 없어서인지 읽어야 커밋한다. 다시 돌리지 않아도 읽게 끝을 보인다
@@ -788,9 +800,22 @@ def main(argv):
                 sys.exit("명세 리뷰어를 띄우지 않았으면 띄우지 않은 이유를 요약에 적는다. 띄웠으면 --spec 을 붙인다\n"
                          + usage("review"))
             spec_head = prev.get("spec_head")  # 명세 리뷰어가 마지막으로 본 커밋은 그대로다
+        dropped = [o.split("=", 1)[1] for o in options if o.startswith("--dropped=")]
+        if "--dropped" in options or (dropped and not dropped[0].isdigit()):
+            sys.exit("--dropped=<수> 는 0 이상의 정수다\n" + usage("review"))
+        dropped = int(dropped[0]) if dropped else 0
+        fixed = (prev.get("left", 0) - int(args[0]) - dropped) if prev else 0
+        since = prev.get("at")
+        if fixed > 0 and since is not None:
+            slips = [s for s in state.get("slips", []) if s.get("source") == "review" and s.get("at", 0) > since]
+            reds = [r for r in [state.get("red")] + state.get("red_history", []) if r and r.get("at", 0) > since]
+            if not slips and not reds:
+                sys.exit("남은 막는 지적이 앞 리뷰(%d개)보다 줄었는데 그 사이 고친 흔적(slip review, 새 red)이 없다. 고쳤으면 "
+                         "고친 막는 지적마다 slip review 로 남긴다. 오탐이나 계획서의 결정과 어긋나 수에서 뺐으면 "
+                         "--dropped=<수> 로 적고 이유를 요약에 쓴다" % prev["left"])
         # spec_head 는 명세 리뷰어가 마지막으로 본 커밋이다. 다음 review-files 가 그 뒤의 diff 만 준다
         state["review"] = {"left": int(args[0]), "note": note, "spec_head": spec_head, "minor": minor, "spec": spec,
-                           **where(cwd)}
+                           "dropped": dropped, "at": time.time(), **where(cwd)}
         said = "리뷰를 기록했다: 남은 막는 지적 %d개 (커밋 %s%s)" % (
             int(args[0]), at(state["review"]), ", 사소한 지적을 모아 고친 커밋의 버그 축" if minor else
             ", 명세 리뷰어도 봄" if spec else "")
@@ -826,7 +851,7 @@ def main(argv):
                      % ("|".join(SOURCES), ", ".join(keys[:30]) or "없음"))
         source, key, what = args
         written = add_mistake(cwd, state, source, what, key)
-        state.setdefault("slips", []).append({"source": source, "key": key, "what": what, **where(cwd)})
+        state.setdefault("slips", []).append({"source": source, "key": key, "what": what, "at": time.time(), **where(cwd)})
         nth = sum(1 for r in mistake_rows() if r.get("key") == key) if written else 0
         said = "%s(%s, key %s%s): %s" % ("실수 기록에 남겼다" if written else NOT_WRITTEN, source, key,
                                        ", 이 key 의 %d번째" % nth if nth else "", brief(what))
@@ -840,8 +865,8 @@ def main(argv):
     elif cmd == "review-files":
         folder = review_files(cwd, state, args[0])
         save(cwd, state)
-        print("%s 에 show.txt, diff.patch 를 썼다. 계획서 원문을 %s 로 쓰고 세 경로를 리뷰어에게 준다"
-              % (folder, os.path.join(folder, "plan.md")))
+        print("%s 에 bug.patch(버그 축), show.txt, diff.patch(명세 리뷰어)를 썼다. 버그 축은 bug.patch 를 끝까지 읽는다. "
+              "명세 리뷰어를 띄우면 계획서 원문을 %s 로 쓰고 세 경로를 준다" % (folder, os.path.join(folder, "plan.md")))
         return
     elif cmd == "check":
         left = missing(state, cwd)
