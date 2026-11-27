@@ -49,7 +49,7 @@ def report(tasks):
     count = lambda rows: len(list(rows))
     done = [t for t in tasks if t["state"] == "done"]
     prs = count(t for t in done if "/pull/" in t["note"])
-    out = ["PR %d개 · 변경 없이 끝남 %d개 · 보류 %d개 · 막힘 %d개 · 남음 %d개" % (
+    out = ["PR %d개 · PR 없이 끝남 %d개 · 보류 %d개 · 막힘 %d개 · 남음 %d개" % (
         prs, len(done) - prs,
         count(t for t in tasks if t["state"] == "hold"),
         count(t for t in tasks if t["state"] == "blocked"),

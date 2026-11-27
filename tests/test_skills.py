@@ -7,7 +7,13 @@ import unittest
 from helpers import ROOT
 
 # 모델은 사람마다 고르는 값이다. fade 의 어디에 박혀도 쓰는 사람의 선택을 덮는다
-MODEL_NAME = re.compile(r"\b(opus|sonnet|haiku|fable)\b|claude-[a-z]+-\d", re.I)
+# 한글은 단어 글자라 「Sonnet으로」에서 \b 가 갈리지 않는다. 앞뒤가 영문자가 아닌지만 본다
+MODEL_NAME = re.compile(r"(?<![a-z])(opus|sonnet|haiku|fable)(?![a-z])|claude-[a-z]+-\d", re.I)
+MODEL_KEY = re.compile(r"^\s*\"?model\"?\s*:")  # frontmatter 의 model: 과 JSON 의 "model":
+
+
+def names_model(line):
+    return bool(MODEL_KEY.search(line) or MODEL_NAME.search(line))
 
 
 def read(rel):
@@ -35,14 +41,16 @@ class ModelNameTest(unittest.TestCase):
         found = []
         for rel in plugin_files():
             for n, line in enumerate(read(rel).splitlines(), 1):
-                if line.startswith("model:") or MODEL_NAME.search(line):
+                if names_model(line):
                     found.append("%s:%d: %s" % (rel, n, line))
         self.assertEqual(found, [])
 
     def test_검사가_모델_이름을_잡는다(self):
-        for line in ("model: opus", "Sonnet 으로 돈다", "--model claude-opus-5-5"):
-            self.assertTrue(line.startswith("model:") or MODEL_NAME.search(line), line)
-        self.assertIsNone(MODEL_NAME.search("--model <워커 모델>"))
+        for line in ("model: opus", "  model: x", '"model": "x"', "Sonnet 으로 돈다", "Sonnet으로 돈다", "opus를 쓴다",
+                     "--model claude-opus-5-5"):
+            self.assertTrue(names_model(line), line)
+        for line in ("--model <워커 모델>", "disable-model-invocation: true", "모델은 쓰는 사람이 고른다"):
+            self.assertFalse(names_model(line), line)
 
 
 class NonstopCleanupTest(unittest.TestCase):

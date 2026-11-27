@@ -347,7 +347,7 @@ def detail(record):
 
 
 def show(state, cwd, full=False):
-    questions = state.get("questions", [])  # 이 칸이 생기기 전에 시작한 기록에는 없다
+    questions = state.get("questions", [])  # start 가 이 칸을 넣기 전에 시작한 기록에는 없다
     open_ = ["%d. %s" % (q["id"], q["question"]) for q in questions if q["answer"] is None]
     lines = ["상태: " + status(state)]
     if open_:
@@ -483,7 +483,7 @@ def main(argv):
         state = {"title": args[0], "scope": "pr" if "--pr-only" in options else "merge", "started": time.time(),
                  "branch": branch(cwd), "unattended": "--unattended" in options,
                  "red": None, "green": None, "no_test": None, "evidence": [], "tried": [], "try_na": None,
-                 "human": [], "review": None, "door": None, "stopped": None, "pr": None, "merged": None}
+                 "human": [], "questions": [], "review": None, "door": None, "stopped": None, "pr": None, "merged": None}
         save(cwd, state)
         print(show(state, cwd))
         return

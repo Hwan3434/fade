@@ -1,4 +1,7 @@
 """사용자에게 물은 것을 job 기록에 남기고, 답이 없는 질문은 show 첫머리에 다시 낸다."""
+import json
+import os
+import subprocess
 import unittest
 
 from helpers import commit_and_switch, git_repo, job
@@ -55,14 +58,15 @@ class QuestionTest(unittest.TestCase):
     def test_빈_질문은_받지_않는다(self):
         self.assertNotEqual(job(self.cwd, "ask", " ").returncode, 0)
 
-    def test_질문이_없던_옛_기록도_show_가_돈다(self):
-        import json, os, subprocess
+    def test_질문_칸이_없던_옛_기록도_show_와_ask_가_돈다(self):
         d = subprocess.run(["git", "rev-parse", "--absolute-git-dir"], cwd=self.cwd, capture_output=True,
                            text=True).stdout.strip()
         p = os.path.join(d, "fade-job.json")
-        state = json.load(open(p, encoding="utf-8"))
-        state.pop("questions", None)
-        json.dump(state, open(p, "w", encoding="utf-8"))
+        with open(p, encoding="utf-8") as f:
+            state = json.load(f)
+        del state["questions"]
+        with open(p, "w", encoding="utf-8") as f:
+            json.dump(state, f)
         self.assertEqual(self.show()[0], "상태: 진행 중")
         self.assertEqual(job(self.cwd, "ask", "배포도 할까").returncode, 0)
 
