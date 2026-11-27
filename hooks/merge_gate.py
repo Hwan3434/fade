@@ -97,7 +97,10 @@ def segments(command):
     """명령 줄을 실제로 실행될 단순 명령 조각(토큰 목록)들로 나눈다. 앞에 붙은 환경 변수 지정은 뗀다.
     인용된 글자, heredoc 본문, 주석은 명령으로 치지 않는다. 해석하지 못하면 ValueError.
     shlex 가 못 읽는 bash 의 $'...' 는 빈 따옴표로 바꿔 읽는다. 인용된 글자라 명령으로 치지 않는 것은 같다."""
-    lex = shlex.shlex(without_comments(without_ansi_c(without_heredoc_bodies(command))), posix=True,
+    # 리다이렉트에 붙은 fd 번호(2>, 1>&2)를 뗀다. shlex 는 「3 >」과 「3>」을 같은 낱말로 나눠, 나눈 뒤에는
+    # 띄어 쓴 인자(gh pr merge 3 >/dev/null 의 PR 번호)와 가를 수 없다
+    command = re.sub(r"(?<![\w$\"'/.~-])\d+(?=[<>])", "", without_heredoc_bodies(command))
+    lex = shlex.shlex(without_comments(without_ansi_c(command)), posix=True,
                       punctuation_chars=PUNCTUATION)
     lex.whitespace_split = True
     lex.whitespace = " \t\r"  # 줄바꿈은 명령을 나누는 글자로 읽는다
@@ -121,20 +124,43 @@ MERGE_VALUE_OPTIONS = {"-m", "-F", "-s", "-X", "--strategy", "--strategy-option"
 WRAPPERS = {"sudo", "env", "command", "exec", "nohup", "time", "!", "{", "if", "then", "elif", "else", "while", "until", "do"}
 
 
+def without_redirects(seg):
+    """조각에서 리다이렉트(`>/dev/null`, `2>&1`, `< f`)와 그 대상을 뗀다. 폴더나 브랜치 이름으로 읽히지 않게 한다."""
+    out, i = [], 0
+    while i < len(seg):
+        tok = seg[i]
+        if tok and set(tok) <= set("<>&"):
+            i += 2  # 리다이렉트와 그 대상. 리다이렉트에 붙은 fd 번호(2>&1 의 2)는 segments 가 먼저 뗐다
+            continue
+        out.append(tok)
+        i += 1
+    return out
+
+
+def folder(base, value):
+    """cd 나 git -C 의 값으로 간 폴더. 셸 변수처럼 펼칠 수 없거나 없는 폴더면 None(알 수 없음)이다."""
+    if "$" in value or "`" in value or (base is None and not os.path.isabs(os.path.expanduser(value))):
+        return None
+    path = os.path.normpath(os.path.join(base or "/", os.path.expanduser(value)))
+    return path if os.path.isdir(path) else None
+
+
 def located(command, cwd):
     """명령 줄의 단순 명령 조각마다 (그 조각이 도는 폴더, 토큰들)을 돌려준다. 같은 명령 줄의 cd 를 따라가고,
-    git 의 -C 는 그 조각의 폴더로 읽어 토큰에서 뗀다. 셸 예약어와 감싸는 명령은 뗀다."""
+    git 의 -C 는 그 조각의 폴더로 읽어 토큰에서 뗀다. 셸 예약어, 감싸는 명령, 리다이렉트는 뗀다.
+    폴더를 알 수 없으면(셸 변수, 없는 폴더) 그 조각의 폴더는 None 이다. 부르는 쪽이 세션 폴더로 판정한다."""
     out = []
     for seg in segments(command):
         while seg and (seg[0] in WRAPPERS or ("=" in seg[0] and not seg[0].startswith("-"))):
             seg = seg[1:]
+        seg = without_redirects(seg)
         if not seg:
             continue
         name = os.path.basename(seg[0])
         if name == "cd":
-            target = seg[-1] if len(seg) > 1 else "~"
+            target = next((a for a in seg[1:] if not a.startswith("-") or a == "-"), "~")
             if target != "-":
-                cwd = os.path.normpath(os.path.join(cwd, os.path.expanduser(target)))
+                cwd = folder(cwd, target)
             continue
         here = cwd
         if name == "git":
@@ -144,7 +170,7 @@ def located(command, cwd):
                 if a in GIT_VALUE_OPTIONS and rest:
                     value = rest.pop(0)
                     if a == "-C":
-                        here = os.path.normpath(os.path.join(here, os.path.expanduser(value)))
+                        here = folder(here, value)
                     continue
                 args.append(a)
             seg = args + rest
@@ -234,8 +260,11 @@ def pr_branch(cwd, merge_args):
 
 
 def gh_target(here, merge_args):
-    """`gh pr merge` 가 들이는 작업의 job (기록, 워크트리). 그 폴더의 기록이 먼저이고, 없으면 PR 의 브랜치로 워크트리를 찾는다."""
-    return job_at(here) or job_at(worktree_of(here, pr_branch(here, merge_args)))
+    """`gh pr merge` 가 들이는 작업의 job (기록, 워크트리). PR 의 브랜치가 체크아웃된 워크트리의 기록이 먼저다(다른 작업의
+    워크트리에서 합쳐도 그 PR 의 기록을 본다). PR 의 브랜치를 못 읽거나 그 워크트리가 없으면 그 폴더의 기록을 본다."""
+    if here is None:
+        return None
+    return job_at(worktree_of(here, pr_branch(here, merge_args))) or job_at(here)
 
 
 VALUE_FLAGS = {"-R", "--repo", "-t", "--subject", "-b", "--body", "-F", "--body-file",
@@ -291,16 +320,25 @@ def problems(command, cwd):
     """명령 줄이 base 로 들이는 job 마다 빠진 것을 모은다. (기록, 워크트리, 빠진 것들) 의 목록."""
     out = []
     for here, seg in located(command, cwd):
-        if len(seg) >= 3 and os.path.basename(seg[0]) == "gh" and seg[1:3] == ["pr", "merge"]:
-            # cd 대상이 레포 밖이거나 펼쳐지지 않은 글자($WT)여서 못 찾으면 세션 폴더의 기록을 본다(예전 동작)
-            found = gh_target(here, seg[3:]) or (here != cwd and gh_target(cwd, seg[3:]))
-            if found:
-                state, wt = found
-                left = job.missing(state, wt) + [p for p in (ci_problem(wt, seg[3:]), head_problem(wt, seg[3:])) if p]
-                out.append((state, wt, left))
-        else:
-            out += [(state, wt, job.missing(state, wt)) for state, wt in git_targets(here, seg)]
+        try:  # 한 조각의 판정이 실패해도 같은 줄의 다른 병합 판정은 남긴다
+            out += judge(here, seg, cwd)
+        except Exception as e:
+            print("fade merge_gate: %s 조각을 판정하지 못했다: %s" % (" ".join(seg[:3]), e), file=sys.stderr)
     return [o for o in out if o[2]]
+
+
+def judge(here, seg, cwd):
+    """한 조각이 base 로 들이는 job 들의 (기록, 워크트리, 빠진 것들)."""
+    if len(seg) >= 3 and os.path.basename(seg[0]) == "gh" and seg[1:3] == ["pr", "merge"]:
+        # 폴더를 알 수 없거나(셸 변수, 없는 폴더) 그 폴더에서 못 찾으면 세션 폴더의 기록을 본다
+        found = gh_target(here, seg[3:]) or (here != cwd and gh_target(cwd, seg[3:]))
+        if not found:
+            return []
+        state, wt = found
+        return [(state, wt, job.missing(state, wt) + [p for p in (ci_problem(wt, seg[3:]), head_problem(wt, seg[3:])) if p])]
+    if here is None:
+        return []  # 어느 브랜치에서 도는지 모르니 base 로 들이는지 알 수 없다
+    return [(state, wt, job.missing(state, wt)) for state, wt in git_targets(here, seg)]
 
 
 def main():
