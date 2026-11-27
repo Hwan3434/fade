@@ -93,7 +93,10 @@ class DestructiveGateTest(unittest.TestCase):
 
     def test_끝_이름의_글롭은_그_폴더_안_전부로_본다(self):
         self.assertBlocked("rm -rf ~/.*")
+        self.assertBlocked("rm -rf ~/.[!.]*")
         self.assertBlocked("rm -rf ~/.ssh/id_*")
+        self.assertAllowed("rm -rf ~/*.bak")  # 이름이 걸린 글롭은 폴더 전체가 아니다
+        self.assertAllowed("cd ~/proj* && rm -rf build")
         self.assertAllowed("rm -rf ~/logs/*.log")
         self.assertAllowed("rm -rf /tmp/x?")
 
