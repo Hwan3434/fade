@@ -16,12 +16,15 @@
 「지금 세션이 그 작업을 시작했는가」는 세션 기록(본체와 하위 에이전트)의 Bash 호출에서 그 워크트리에서 돈
 `job.py start` 를 찾아 가른다. dispatch 의 워커는 첫 지시문(메타 줄을 건너뛴 첫 사용자 글)이 「fade:job 스킬로 아래
 계획서를 수행한다」로 시작한다. 명령 해석은 병합 훅과 같다(merge_gate.located). 세션 기록이 없으면 가를 수 없어 막지 않는다.
-폴더를 알 수 없는 start(셸 변수로 cd)를 그 작업이 시작되기 전 하루 안에 냈으면, 리드만 할 명령은 이 세션이 시작한
-것으로 보고 막고, 지우기는 리드의 기록을 요구한다(둘 다 막는 쪽).
+짐작하지 않는다. 그 워크트리에서 친 start 가 세션 기록에 분명히 보일 때만 이 세션이 시작한 것이다. 폴더를 알 수 없는
+start(셸 변수로 cd)는 이 세션의 시작으로 치지 않는다. 그래서 리드만 할 명령은 dispatch 의 워커(start 를 어떻게 쳤든)와,
+그 워크트리에서 start 를 친 것이 분명한 사람 없는 작업의 세션에서만 막는다. 지우기는 이 세션이 시작한 것이 분명하고
+dispatch 의 워커가 아닐 때만 리드의 기록 없이 받는다. 나머지는 워커가 보고하고 리드가 읽어 거른다.
 못 막는 것: 환경이 세션을 닫으면서 워크트리까지 지우는 것(Bash 가 아닌 도구), 그 세션이 띄운 다른 세션(claude -p)의 명령,
-bash -c·eval·셸 변수에 담은 호출, 셸 변수로 가리킨 워크트리 지우기, fade-job.json 을 직접 고치는 것(contrasted 와
-hardened 는 워커가 쓰는 같은 기록에 있고, 워크트리를 지우면 함께 사라진다), 같은 워크트리에 다시 띄운 워커가 그 세션에서
-start 를 하지 않은 경우, 리드가 병합하고 `job.py merged` 를 남기지 않은 작업(병합되지 않은 작업으로 보인다).
+bash -c·eval·셸 변수에 담은 호출, 셸 변수로 폴더를 옮겨 start 를 친 사람 없는 작업(dispatch 워커가 아닌)이 스스로
+남기는 리드 기록, 셸 변수로 가리킨 워크트리 지우기, fade-job.json 을 직접 고치는 것(contrasted 와
+hardened 는 워커가 쓰는 같은 기록에 있고, 워크트리를 지우면 함께 사라진다), 같은 워크트리에 다시 띄운 사람 없는 세션(dispatch
+워커가 아닌)이 그 세션에서 start 를 하지 않은 경우, 리드가 병합하고 `job.py merged` 를 남기지 않은 작업(병합되지 않은 작업으로 보인다).
 이 훅이 오류로 죽으면 판정하지 않는다. 실수를 막는 난간이지 보안 경계가 아니다.
 """
 import glob
@@ -61,17 +64,14 @@ def bash_calls(transcript):
                     first = " ".join(t for t in pieces_of(content) if not t.lstrip().startswith("<")) or None
                 for part in content if isinstance(content, list) else []:
                     if isinstance(part, dict) and part.get("type") == "tool_use" and part.get("name") == "Bash":
-                        calls.append((row.get("cwd"), (part.get("input") or {}).get("command") or "",
-                                      merge_gate.seconds(row.get("timestamp"))))
+                        calls.append((row.get("cwd"), (part.get("input") or {}).get("command") or ""))
     return calls, first or ""
 
 
-def started_here(calls, wt, started):
-    """세션 기록의 Bash 호출 가운데 그 워크트리에서 돈 `job.py start` 가 있으면 True. 폴더를 알 수 없는
-    (셸 변수로 cd 한) start 를 그 작업이 시작되기 전 하루 안(앞 명령이나 승인 대기로 벌어질 수 있다)이나 1분 뒤까지에
-    냈으면 None(그럴 수 있음), 없으면 False. 기록의 시각은 명령을 낸 때이고 started 는 job.py 가 돈 때다."""
-    maybe = False
-    for cwd, command, at in calls:
+def started_here(calls, wt):
+    """세션 기록의 Bash 호출 가운데 그 워크트리에서 돈 `job.py start` 가 분명히 보이는가. 폴더를 알 수 없는(셸 변수로
+    cd 한) start 는 치지 않는다."""
+    for cwd, command in calls:
         try:
             pieces = merge_gate.located(command, cwd)
         except ValueError:
@@ -79,11 +79,9 @@ def started_here(calls, wt, started):
         for here, seg in pieces:
             if merge_gate.job_command(seg) != "start":
                 continue
-            if here is None:
-                maybe = maybe or (at is not None and -60 <= (started or 0) - at <= 86400)
-            elif os.path.isdir(here) and job.git_dir(here) and job.top_dir(here) == wt:
+            if here and os.path.isdir(here) and job.git_dir(here) and job.top_dir(here) == wt:
                 return True
-    return None if maybe else False
+    return False
 
 
 def admin_worktree(folder):
@@ -179,14 +177,13 @@ def problem(command, cwd, transcript):
     worker = first.lstrip().startswith(DISPATCHED)  # dispatch 가 띄운 워커. 사람이 있어도 리드의 일을 스스로 하지 않는다
     for here, seg in lead_only:
         found = merge_gate.job_at(here or cwd, merged_too=True)
-        # 셸 변수 폴더의 start 처럼 가를 수 없으면 이 세션이 시작한 것으로 본다(막는 쪽)
-        if found and (found[0].get("unattended") or worker) and \
-                started_here(calls, job.top_dir(found[1]), found[0].get("started")) is not False:
+        # dispatch 워커는 start 를 어떻게 쳤든 막고, 사람 없는 작업은 그 워크트리의 start 가 분명한 세션만 막는다
+        if found and (worker or (found[0].get("unattended") and started_here(calls, job.top_dir(found[1])))):
             return ("사람 없는 작업이나 dispatch 의 워커를 돈 세션은 그 작업의 `job.py %s` 를 스스로 남기지 못한다. "
                     "사람이 볼 것은 사람이 확인한 뒤 사람(터미널)이나 사람이 맡긴 리드 세션이 풀고, 대조와 hardener 는 "
                     "리드가 남긴다. 지금 할 수 없으면 보고에 남겨 사람에게 넘긴다" % merge_gate.job_command(seg))
     for state, wt in wiped:
-        if started_here(calls, wt, state.get("started")) is True and not worker:
+        if started_here(calls, wt) and not worker:
             continue  # 이 세션이 시작한 작업의 정리(nonstop, 이 세션에서 맡긴 job)
         left = [label for c, label in (("contrasted", "리드의 대조(`job.py contrasted \"<대조 결과>\"`)"),
                                        ("hardened", "hardener 결과(`job.py hardened \"<결과>\"`)")) if not state.get(c)]

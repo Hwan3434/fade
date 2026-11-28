@@ -46,7 +46,8 @@ FADE_MISTAKES 를 정하지 않은 동안 쓰지 않는다. PR 을 기록하면 
   job.py human   <사람이 볼 것>           사람만 판정할 수 있는 것이 남았을 때. 직접 써 보기를 대신하고, 병합을 막는다
   job.py human-done <번호> <누가 무엇을 근거로 풀었나> [<근거 파일>...]
                                          사람(또는 사람이 맡긴 리드)이 확인한 뒤 그 사람이 볼 것을 푼다. 번호는 show 의 번호다.
-                                         사람 없는 작업을 돈 세션은 스스로 풀지 못한다(fade 훅 lead_gate 가 막는다)
+                                         dispatch 워커와, 그 워크트리에서 start 를 친 것이 분명한 사람 없는 작업의 세션은
+                                         스스로 풀지 못한다(fade 훅 lead_gate 가 막는다)
   job.py contrasted <대조 결과>          리드가 워커의 기록을 완료 기준과 대조한 결과. 리드가 워커의 워크트리에서 남긴다
   job.py hardened <hardener 결과>        리드가 hardener 를 돌린 결과. 병합된 워커의 워크트리는 이 둘이 있어야 지운다
   job.py review-files <base>             버그 축이 볼 bug.patch(앞 리뷰가 없으면 base 와의 전체, 있으면 그 리뷰의
@@ -76,7 +77,8 @@ FADE_MISTAKES 를 정하지 않은 동안 쓰지 않는다. PR 을 기록하면 
   job.py stop    <이유>                  해결하지 못했거나 사용자 결정이 필요해 멈춘다. 병합을 막고 실수 기록에 남긴다
   job.py resume  <누가 무엇을 근거로 풀었나>
                                          사람(또는 사람이 맡긴 리드)이 멈춘 이유를 확인한 뒤 멈춤을 푼다. 멈춘 이유와 푼 근거가
-                                         기록에 남는다. 사람 없는 작업이나 dispatch 워커를 돈 세션은 스스로 풀지 못한다(fade 훅 lead_gate 가 막는다)
+                                         기록에 남는다. dispatch 워커와, 그 워크트리에서 start 를 친 것이 분명한 사람 없는 작업의 세션은
+                                         스스로 풀지 못한다(fade 훅 lead_gate 가 막는다)
   job.py slip    review|ci|try|user <key> <무엇을 잘못했나>
                                          리뷰에서 고친 막는 지적, CI 실패, 써 보기(tester)가 찾은 버그, 사용자 지적을 실수 기록에
                                          남긴다. key 는 같은 실수끼리 묶는 이름(영문 소문자, 숫자, -)이다. 같은 실수의 key 가

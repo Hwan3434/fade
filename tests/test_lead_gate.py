@@ -39,7 +39,7 @@ class Base(unittest.TestCase):
     def transcript(self, first="작업해 줘", commands=(), cwd=None):
         """세션 기록 파일: 첫 사용자 글과 Bash 호출들."""
         path = os.path.join(self.logs, "s%d.jsonl" % len(os.listdir(self.logs)))
-        now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())  # job.py start 와 같은 때에 찍힌 기록
+        now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         rows = [{"type": "user", "timestamp": now, "cwd": cwd or self.main,
                  "message": {"role": "user", "content": first}}]
         for c in commands:
@@ -49,15 +49,6 @@ class Base(unittest.TestCase):
         with open(path, "w", encoding="utf-8") as f:
             f.write("\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + "\n")
         return path
-
-    def restamp(self, path, at):
-        """세션 기록의 모든 줄의 시각을 at 으로 바꾼다."""
-        with open(path, encoding="utf-8") as f:
-            rows = [json.loads(l) for l in f]
-        for r in rows:
-            r["timestamp"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(at))
-        with open(path, "w", encoding="utf-8") as f:
-            f.write("\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + "\n")
 
     def own(self, first="작업해 줘"):
         """이 작업을 시작한 세션의 기록."""
@@ -93,10 +84,11 @@ class LeadOnlyTest(Base):
         own = self.own(DISPATCHED.replace("사용자: 없음", "사용자: 있음"))
         self.assertIsNotNone(self.gate('cd %s && job.py contrasted "맞음"' % self.wt, own))
 
-    def test_셸_변수로_가리킨_폴더의_start_도_이_세션의_시작으로_본다(self):
+    def test_dispatch_워커는_start_를_어떻게_쳤든_스스로_남기지_못한다(self):
         self.start("--unattended")
-        own = self.transcript(commands=['WT=%s; cd "$WT" && job.py start --unattended "작업"' % self.wt])
+        own = self.transcript(DISPATCHED, ['WT=%s; cd "$WT" && job.py start --unattended "작업"' % self.wt])
         self.assertIsNotNone(self.gate('cd %s && job.py human-done 1 "봤다"' % self.wt, own))
+        self.assertIsNotNone(self.gate('cd %s && job.py hardened "없음"' % self.wt, self.transcript(DISPATCHED)))
 
     def test_하위_에이전트_기록의_start_도_본다(self):
         self.start("--unattended")
@@ -118,19 +110,12 @@ class LeadOnlyTest(Base):
                         'cd %s && uv run job.py contrasted x' % self.wt, 'cd %s && python3 -W ignore job.py hardened x' % self.wt):
             self.assertIsNotNone(self.gate(command, self.own()), command)
 
-    def test_오래_기다린_뒤에_돈_폴더_모르는_start_도_이_세션의_시작으로_본다(self):
-        # 기록의 시각은 명령을 낸 때이고 started 는 job.py 가 돈 때다. 승인 대기나 앞 명령으로 몇 분 벌어질 수 있다
+    def test_폴더를_알_수_없는_start_만_있으면_이_세션의_시작으로_짐작하지_않는다(self):
+        # 리드가 그 작업이 시작되기 몇 시간 전에 다른 써 보기에서 폴더 모르는 start 를 냈다가, 병합 뒤 hardened 를 막혔다
         self.start("--unattended")
-        own = self.transcript(commands=['npm ci && cd "$WT" && job.py start --unattended "작업"'])
-        self.restamp(own, time.time() - 1200)  # 명령을 낸 지 20분 뒤에 start 가 돌았다
-        self.assertIsNotNone(self.gate('cd %s && job.py human-done 1 "봤다"' % self.wt, own))
-
-    def test_오래전에_폴더_모르게_돈_start_는_이_작업의_시작이_아니다(self):
-        # 셸 변수 폴더의 start 는 이 작업이 시작된 때에 찍힌 것만 「그럴 수 있음」으로 본다
-        self.start("--unattended")
-        lead = self.transcript(commands=['cd "$OLD" && job.py start "예전 작업"'])
-        self.restamp(lead, time.time() - 30 * 24 * 3600)
-        self.assertIsNone(self.gate('cd %s && job.py hardened "제안 없음"' % self.wt, lead))
+        lead = self.transcript(commands=['cd "$TRY" && job.py start "써 보기"'] * 4)
+        for command in ('cd %s && job.py hardened "제안 없음"' % self.wt, 'cd %s && job.py contrasted "맞음"' % self.wt):
+            self.assertIsNone(self.gate(command, lead), command)
 
     def test_첫_사용자_글의_앞_조각이_메타_글이어도_dispatch_지시문을_찾는다(self):
         self.start()
