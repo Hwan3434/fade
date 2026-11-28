@@ -116,9 +116,11 @@ def seen_in(path, since):
 
 def placed(patch, numbered):
     """번호가 붙은 출력(Read)이 덮은 bug.patch 의 줄 번호들. 조각 파일을 읽으면 번호가 조각 안의 번호라, 번호와 bug.patch
-    의 줄이 가장 많이 맞는 어긋남(0 이 먼저)을 고른다."""
-    first = numbered[0][1]
-    shifts = [0] + [i - (numbered[0][0] - 1) for i, t in enumerate(patch) if t == first]
+    의 줄이 가장 많이 맞는 어긋남(0 이 먼저)을 고른다. 어긋남 후보는 bug.patch 에 있는 첫 줄로 잡는다(앞에 다른 출력이 붙은
+    파일, 예: `wc -l` 과 cat 을 함께 돌린 출력을 Read 로 읽으면 1번 줄이 bug.patch 에 없다)."""
+    known = set(patch)
+    anchor = next(((n, text) for n, text in numbered if text in known), None)
+    shifts = [0] + ([i - (anchor[0] - 1) for i, t in enumerate(patch) if t == anchor[1]] if anchor else [])
     best = set()
     for d in shifts:
         hit = {n + d for n, text in numbered if 0 <= n - 1 + d < len(patch) and patch[n - 1 + d] == text}
