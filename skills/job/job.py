@@ -341,6 +341,20 @@ def untracked(cwd):
     return names(cwd, "ls-files", "--others", "--exclude-standard")
 
 
+def worktree_files(cwd):
+    """워크트리 파일(추적하는 파일과 무시되지 않은 새 파일, .fade-review/ 는 빼고)마다 수정 시각과 크기. 없는 파일은 None.
+    review-files 와 review 사이에 리뷰를 맡긴 하위 에이전트가 파일을 고쳤는지 본다."""
+    top, out = top_dir(cwd), {}
+    for rel in names(cwd, "ls-files", "--cached", "--others", "--exclude-standard"):
+        if rel and not rel.startswith(".fade-review/"):
+            try:
+                st = os.stat(os.path.join(top, rel))
+                out[rel] = [st.st_mtime_ns, st.st_size]
+            except OSError:
+                out[rel] = None
+    return out
+
+
 def changed_since(cwd, red):
     """red 를 찍은 뒤 내용이 바뀐 파일. red 때 커밋 전 변경이 있던 파일은 그때의 내용과 견준다(테스트와 구현이 한
     파일이어도 red 뒤에 더 고치면 바뀐 것이다). red 의 커밋이 사라졌으면 None(판정하지 않는다)."""
@@ -946,6 +960,7 @@ def review_files(cwd, state, base):
                        ("bug.patch", bug)):
         with open(os.path.join(folder, name), "w", encoding="utf-8") as f:
             f.write(text)
+    state["review_files"]["files"] = worktree_files(cwd)
     print("base 와의 diff: 파일 %d개, 더한 줄 %d + 뺀 줄 %d = %d줄" % (len(rows), added, removed, added + removed))
     print("diff.patch: " + ("고친 부분만(명세 리뷰어가 본 %s 뒤의 diff)" % short(since) if since else "전체(base 와의 diff)"))
     print(stat.stdout.rstrip("\n"))
@@ -1179,6 +1194,14 @@ def main(argv):
             sys.exit("남은 막는 지적 수는 0 이상의 정수다")
         made, minor, spec, now = state.get("review_files") or {}, "--minor" in options, "--spec" in options, head(cwd)
         note, prev = " ".join(args[1:2]), state.get("review") or {}
+        if made.get("files") is not None and made.get("head") == now:
+            files = worktree_files(cwd)
+            moved = sorted(r for r in set(made["files"]) | set(files) if made["files"].get(r) != files.get(r))
+            if moved:
+                listed = ", ".join(moved[:10]) + (" 외 %d개" % (len(moved) - 10) if len(moved) > 10 else "")
+                sys.exit("review-files 뒤에 워크트리 파일이 바뀌었다: %s. 리뷰는 바뀌기 전의 파일을 본 것이다. 누가 무엇을 "
+                         "바꿨는지 확인하고(리뷰를 맡긴 에이전트는 읽기만 한다), 남길 것은 커밋한 뒤 review-files 부터 다시 "
+                         "리뷰한다" % listed)
         if minor and spec:
             sys.exit("--spec 과 --minor 는 함께 쓰지 않는다. 사소한 지적을 고친 커밋은 명세 리뷰어를 다시 띄우지 않는다")
         if minor:
