@@ -79,6 +79,8 @@ class JobTest(unittest.TestCase):
             r = job(self.cwd, "log", "기준", command)
             self.assertNotIn("파이프", r.stderr, command)
             self.assertNotIn("리드나 사람만", r.stderr, command)
+            self.assertIn("증거를 기록했다", r.stdout, command)
+        self.assertIn("파이프", job(self.cwd, "log", "기준", "x # $(\na | b").stderr)  # 주석 안의 $( 는 치환이 아니다
 
     def test_log_와_red_는_리드만_할_기록을_감싸_부르지_않는다(self):
         self.start()
@@ -101,9 +103,11 @@ class JobTest(unittest.TestCase):
         script.write("exit 0\n")
         script.close()
         self.addCleanup(os.remove, script.name)
-        r = job(repo.name, "log", "기준", "sh " + script.name)
-        self.assertNotEqual(r.returncode, 0)
-        self.assertIn("임시 폴더", r.stderr)
+        for command in ("sh " + script.name, "sh -e " + script.name, "timeout 60 sh " + script.name,
+                        "env FOO=1 sh " + script.name, "python3 -u " + script.name, script.name):
+            r = job(repo.name, "log", "기준", command)
+            self.assertNotEqual(r.returncode, 0, command)
+            self.assertIn("임시 폴더", r.stderr, command)
         # 명령 자리가 아닌 임시 폴더의 데이터 파일(비교할 기대값)은 받는다
         self.assertNotIn("임시 폴더", job(repo.name, "log", "기준", "diff -u %s %s || true" % (script.name, script.name)).stderr)
         self.assertEqual(job(self.cwd, "start", "작업").returncode, 0)

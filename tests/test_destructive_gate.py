@@ -122,6 +122,8 @@ class DestructiveGateTest(unittest.TestCase):
         for command in ('rm -rf "$PWD"', "rm -rf ${PWD}/*", 'rm -rf "$(pwd)"'):
             self.assertBlocked(command, cwd=self.home)
         self.assertAllowed('rm -rf "$PWD/build"', cwd=self.home)
+        self.assertBlocked('cd "$X"; rm -rf "$PWD"', cwd=self.home)  # 폴더를 알 수 없으면 $PWD 도 알 수 없는 폴더다
+        self.assertBlocked("cat > n.md <<EOF\nEOF) it's\nEOF\nrm -rf ~")
 
     def test_감싸는_명령과_그_옵션_뒤의_삭제도_본다(self):
         for command in ("timeout 5 rm -rf ~", "sudo -u root rm -rf ~", "env -i rm -rf ~", "nice -n 10 rm -rf ~",

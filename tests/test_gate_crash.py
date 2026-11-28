@@ -94,6 +94,9 @@ class ParseTest(Repo):
                         "git commit -m \"$(cat <<'EOF'\nsay \"hi\nEOF)\" && git push origin HEAD:main"):
             self.denied(command, self.wt)
 
+    def test_명령_치환_밖의_heredoc_은_끝_글_뒤_괄호_줄에서_끝나지_않는다(self):
+        self.denied("cat > n.md <<EOF\nEOF) it's fine\nEOF\ngit merge feat/x", self.main)
+
     def test_따옴표_없는_heredoc_끝_글에_하이픈이_있어도_그_줄까지가_본문이다(self):
         self.assertIsNone(self.gate("cat > n.md <<END-NOTES\ngit merge feat/x\nEND-NOTES", self.main))
         self.denied("cat > n.md <<END-NOTES\nbody\nEND-NOTES\ngit merge feat/x", self.main)

@@ -87,8 +87,8 @@ class GateTest(unittest.TestCase):
 
     def read_patch(self, path=None, shown=None, **extra):
         """Read 도구처럼 줄 번호를 붙인 결과를 남긴다. shown 은 실제로 돌려준 줄 범위다(토큰 한도로 잘리면 앞부분만 온다)."""
-        with open(self.patch, encoding="utf-8") as f:
-            lines = f.read().splitlines()
+        with open(self.patch, encoding="utf-8", newline="") as f:
+            lines = f.read().split("\n")[:-1]  # Read 처럼 \n 으로만 줄을 센다
         start = extra.get("offset", 1)
         end = min(len(lines), start - 1 + extra.get("limit", 2000))
         first, last = shown or (start, end)
