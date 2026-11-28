@@ -80,7 +80,8 @@ class JobTest(unittest.TestCase):
             self.assertNotIn("파이프", r.stderr, command)
             self.assertNotIn("리드나 사람만", r.stderr, command)
             self.assertIn("증거를 기록했다", r.stdout, command)
-        self.assertIn("파이프", job(self.cwd, "log", "기준", "x # $(\na | b").stderr)  # 주석 안의 $( 는 치환이 아니다
+        for command in ("x # $(\na | b", "a ;# $(\nb | c"):  # 주석 안의 $( 는 치환이 아니다
+            self.assertIn("파이프", job(self.cwd, "log", "기준", command).stderr, command)
 
     def test_log_와_red_는_리드만_할_기록을_감싸_부르지_않는다(self):
         self.start()
@@ -104,7 +105,9 @@ class JobTest(unittest.TestCase):
         script.close()
         self.addCleanup(os.remove, script.name)
         for command in ("sh " + script.name, "sh -e " + script.name, "timeout 60 sh " + script.name,
-                        "env FOO=1 sh " + script.name, "python3 -u " + script.name, script.name):
+                        "env FOO=1 sh " + script.name, "python3 -u " + script.name, script.name,
+                        "sudo -u root " + script.name, "python3 -W ignore " + script.name, "sh -o pipefail " + script.name,
+                        "timeout -s KILL 5 sh " + script.name, "env -u FOO " + script.name, "timeout 0.5 sh " + script.name):
             r = job(repo.name, "log", "기준", command)
             self.assertNotEqual(r.returncode, 0, command)
             self.assertIn("임시 폴더", r.stderr, command)
