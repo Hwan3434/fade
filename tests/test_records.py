@@ -230,6 +230,17 @@ class SlipKeyTest(Base):
             last = json.loads(f.read().splitlines()[-1])
         self.assertEqual((last["what"], last["pr"]), ("이번", "https://github.com/o/r/pull/7"))
 
+    def test_실수_기록에_객체가_아닌_줄이_있어도_slip_과_mark_가_죽지_않는다(self):
+        path, env = self.own_log()
+        job(self.cwd, "slip", "review", "k", "앞", env=env)
+        with open(path, "a", encoding="utf-8") as f:
+            f.write("[1, 2]\n")
+        r = job(self.cwd, "slip", "review", "k2", "뒤", env=env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        r = job(self.cwd, "mark", "2", "key", "x", env=env)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertNotIn("Traceback", r.stderr)
+
     def test_tester_가_찾은_버그는_try_로_남긴다(self):
         path, env = self.own_log()
         self.assertEqual(job(self.cwd, "slip", "try", "empty-input", "빈 입력에서 죽었다", env=env).returncode, 0)

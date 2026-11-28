@@ -588,6 +588,40 @@ class ReviewFilesTest(unittest.TestCase):
         self.assertNotIn("b/gen.txt", bug)
         self.assertIn("이 브랜치가 .gitattributes 를 바꿨다", out)
 
+    def test_이_브랜치가_더한_diff_끄기_표시로_내용을_숨기지_못한다(self):
+        # git diff 도 base 의 표시로 만든다. 브랜치가 -diff 를 더하면 Binary files ... differ 한 줄만 남았다
+        out, bug, spec = self.files(None, branch_attributes="b.py -diff\nc.py binary\n", b_py="b = 1\n", c_py="c = 2\n")
+        self.assertIn("+b = 1", bug)
+        self.assertIn("+c = 2", bug)
+        self.assertIn("+b = 1", spec)
+
+    def test_한글_이름_파일도_뺀_줄_수와_조각_목록이_바로_나온다(self):
+        out, bug, _ = self.files("한글_생성.txt linguist-generated\n".replace("_생성", "생성"), **{"한글생성_txt": "1\n2\n"})
+        self.assertIn("한글생성.txt(2줄, linguist-generated)", out)
+        big = "".join("v_%d = %d\n" % (i, i) for i in range(2500))
+        out, _, _ = self.files(None, **{"큰파일_py": big, "작은_py": "s = 1\n"})
+        self.assertIn("큰파일.py", out)
+        self.assertNotIn("\\3", out)
+
+    def test_표시된_파일이_아주_많아도_리뷰_파일을_만든다(self):
+        subprocess.run(["git", "switch", "-q", "main"], cwd=self.cwd, check=True)
+        commit_file(self.cwd, ".gitattributes", "gen/** linguist-generated\n", "표시")
+        subprocess.run(["git", "switch", "-q", "feat/x"], cwd=self.cwd, check=True)
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid", "merge", "-q", "--no-edit",
+                        "main"], cwd=self.cwd, check=True)
+        gen = os.path.join(self.cwd, "gen")
+        os.makedirs(gen)
+        name = "a_generated_file_with_a_rather_long_name_%05d.txt"
+        for i in range(40000):  # 뺄 경로를 인자로 넘기면 인자 한도(macOS 1MB, Linux 2MB)를 넘는 길이
+            with open(os.path.join(gen, name % i), "w") as f:
+                f.write("x\n")
+        subprocess.run(["git", "add", "gen"], cwd=self.cwd, check=True)
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-q", "-m", "생성"],
+                       cwd=self.cwd, check=True)
+        r = job(self.cwd, "review-files", "main")
+        self.assertEqual(r.returncode, 0, r.stderr[-2000:])
+        self.assertIn("bug.patch 가 비었다", r.stdout)
+
     def test_linguist_generated_true_도_빠지고_표시가_남는다(self):
         out, bug, _ = self.files("gen_txt linguist-generated=true\n".replace("_", "."), gen_txt="1\n")
         self.assertNotIn("b/gen.txt", bug)
