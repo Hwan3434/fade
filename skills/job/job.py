@@ -314,7 +314,7 @@ def refused(cwd, command):
 
 
 def tail_of(text):
-    return "\n".join(text.splitlines()[-TAIL:])
+    return "\n".join(text.rstrip("\n").split("\n")[-TAIL:])
 
 
 def pending(cwd):
@@ -352,7 +352,7 @@ def changed_since(cwd, red):
 
 
 def fenced(text):
-    return ["", "  ```text"] + ["  " + line for line in text.splitlines()] + ["  ```", ""]
+    return ["", "  ```text"] + ["  " + line for line in text.rstrip("\n").split("\n")] + ["  ```", ""]
 
 
 def at(record):
@@ -696,7 +696,7 @@ def file_lines(files):
         out.append("    - " + f)
         if f.endswith(".log") and os.path.isfile(f):
             with open(f, encoding="utf-8", errors="replace") as fh:
-                out += ["", "      ```text"] + ["      " + line for line in fh.read().splitlines()] + ["      ```", ""]
+                out += ["", "      ```text"] + ["      " + line for line in fh.read().rstrip("\n").split("\n")] + ["      ```", ""]
     return out
 
 
@@ -901,7 +901,7 @@ def review_files(cwd, state, base):
         stat = subprocess.run(numstat[:3] + numstat[4:], cwd=top, capture_output=True, text=True)
     if stat.returncode != 0:
         sys.exit("base 와의 diff 를 만들지 못했다: " + stat.stderr.strip())
-    rows = [row.split("\t", 2) for row in stat.stdout.splitlines()]
+    rows = [row.split("\t", 2) for row in stat.stdout.split("\n") if row]
     # 바이너리 파일은 줄 수가 - 로 나온다. 세지 않는다
     added, removed = (sum(int(row[i]) for row in rows if row[i].isdigit()) for i in (0, 1))
     now, review = head(cwd), state.get("review") or {}
@@ -948,7 +948,7 @@ def review_files(cwd, state, base):
             f.write(text)
     print("base 와의 diff: 파일 %d개, 더한 줄 %d + 뺀 줄 %d = %d줄" % (len(rows), added, removed, added + removed))
     print("diff.patch: " + ("고친 부분만(명세 리뷰어가 본 %s 뒤의 diff)" % short(since) if since else "전체(base 와의 diff)"))
-    print("\n".join(stat.stdout.splitlines()))
+    print(stat.stdout.rstrip("\n"))
     print("bug.patch: %d줄, %d자 (%s)" % (bug.count("\n"), len(bug),
                                        "앞 리뷰가 본 %s 뒤" % short(last) if last else "base 와의 전체"))
     if skip:

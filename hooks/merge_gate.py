@@ -369,7 +369,7 @@ def worktree_of(cwd, branch):
     listing = git_out(cwd, "worktree", "list", "--porcelain")
     names = {branch[len(p):] for p in ("refs/heads/", "refs/remotes/origin/", "origin/") if branch.startswith(p)} | {branch}
     path = None
-    for line in listing.splitlines():
+    for line in listing.split("\n"):
         if line.startswith("worktree "):
             path = line[len("worktree "):]
         elif line.startswith("branch refs/heads/") and line[len("branch refs/heads/"):] in names:
@@ -465,7 +465,7 @@ def ci_problem(cwd, merge_args):
         return "CI 가 아직 돌고 있다. 끝난 뒤 병합한다"
     if not r.stdout.strip():
         return None  # 검사 줄이 없다: CI 가 없거나(no checks reported) gh 가 PR 을 못 찾은 오류
-    return "CI 가 실패했다. 원인을 고친 뒤 병합한다\n" + "\n".join(r.stdout.splitlines()[-10:])
+    return "CI 가 실패했다. 원인을 고친 뒤 병합한다\n" + "\n".join(r.stdout.rstrip("\n").split("\n")[-10:])
 
 
 def head_problem(cwd, merge_args):
