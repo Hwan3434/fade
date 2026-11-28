@@ -264,6 +264,23 @@ class RemoveTest(Base):
         holder = os.path.dirname(self.main)  # 레포(메인 체크아웃)를 담은 git 아닌 폴더
         self.assertIsNotNone(self.gate("rm -rf " + holder, self.transcript()))
 
+    def test_현재_폴더_변수로_가리킨_워크트리_지우기도_본다(self):
+        self.merged()
+        lead = self.transcript()
+        for command in ('rm -rf "$PWD/.claude/worktrees/x"', "rm -rf ${PWD}/.claude/worktrees/x", 'rm -rf "$PWD"/.claude/worktrees/x',
+                        "rm -rf $PWD/.claude/worktrees/x", 'rm -rf "$(pwd)/.claude/worktrees/x"', 'rm -rf "`pwd`/.claude/worktrees/x"',
+                        'git worktree remove "$PWD/.claude/worktrees/x"'):
+            self.assertIsNotNone(self.gate(command, lead), command)
+
+    def test_레포_밖_워크트리를_가진_메인_체크아웃을_통째로_지워도_본다(self):
+        outside = tempfile.TemporaryDirectory()
+        self.addCleanup(outside.cleanup)
+        wt = os.path.join(os.path.realpath(outside.name), "y")
+        git(self.main, "worktree", "add", "-q", "-b", "feat/y", wt)
+        self.assertEqual(job(wt, "start", "작업", "--unattended").returncode, 0)
+        self.assertEqual(job(wt, "merged", "abc").returncode, 0)
+        self.assertIsNotNone(self.gate("rm -rf " + self.main, self.transcript(), cwd=os.path.dirname(self.main)))
+
     def test_레포_밖_워크트리를_담은_git_아닌_폴더_지우기도_본다(self):
         outside = tempfile.TemporaryDirectory()
         self.addCleanup(outside.cleanup)

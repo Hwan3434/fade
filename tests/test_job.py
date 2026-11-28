@@ -72,6 +72,14 @@ class JobTest(unittest.TestCase):
         self.assertEqual(job(self.cwd, "log", "기준", "false || true").returncode, 0)
         self.assertEqual(job(self.cwd, "log", "기준", "echo 'a|b' \"c|d\" e\\|f").returncode, 0)
 
+    def test_log_와_red_는_파이프_검사를_명령_치환_안과_따옴표_안에서는_하지_않는다(self):
+        self.start()
+        for command in ('x=$(git log --oneline | head -1); test -n "$x"', 'grep -c "job.py human-done" README.md || true',
+                        "echo `echo a | tr a b`"):
+            r = job(self.cwd, "log", "기준", command)
+            self.assertNotIn("파이프", r.stderr, command)
+            self.assertNotIn("리드나 사람만", r.stderr, command)
+
     def test_log_와_red_는_리드만_할_기록을_감싸_부르지_않는다(self):
         self.start()
         for args in (("log", "기준", "job.py human-done 1 x"), ("red", "python3 x/job.py contrasted y; false"),
@@ -96,6 +104,8 @@ class JobTest(unittest.TestCase):
         r = job(repo.name, "log", "기준", "sh " + script.name)
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("임시 폴더", r.stderr)
+        # 명령 자리가 아닌 임시 폴더의 데이터 파일(비교할 기대값)은 받는다
+        self.assertNotIn("임시 폴더", job(repo.name, "log", "기준", "diff -u %s %s || true" % (script.name, script.name)).stderr)
         self.assertEqual(job(self.cwd, "start", "작업").returncode, 0)
         self.assertEqual(job(self.cwd, "log", "기준", "sh " + script.name).returncode, 0)  # 임시 폴더 아래 레포
 

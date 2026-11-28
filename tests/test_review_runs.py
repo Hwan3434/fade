@@ -198,6 +198,27 @@ class GateTest(unittest.TestCase):
         self.read_patch(shown=(1, n - 6))
         self.assertIn("잘린 출력", self.denied())
 
+    def test_줄_안의_폼피드나_유니코드_줄_구분_글자가_있어도_한_번에_다_읽으면_받는다(self):
+        # Read 는 \n 으로만 줄 번호를 센다. splitlines 로 나누면 \x0c, U+2028 에서 줄이 잘려 자리가 어긋났다
+        commit_file(self.cwd, "a.py", "a = 2\nx = '\x0c'\ny = '\u2028'\nz = '\u2029'\n" + "".join("v%d = %d\n" % (i, i) for i in range(8)),
+                    "특수 글자")
+        self.assertEqual(job(self.cwd, "review-files", "main").returncode, 0)
+        with open(self.patch, encoding="utf-8", newline="") as f:
+            lines = f.read().split("\n")[:-1]
+        self.t.prompt(MARKER)
+        self.t.tool("Read", {"file_path": self.patch},
+                    result="\n".join("%6d\t%s" % (i, l) for i, l in enumerate(lines, 1)))
+        self.assertIsNone(self.gate())
+
+    def test_번호_없는_두_출력으로_앞과_끝을_나눠_읽어도_받는다(self):
+        commit_file(self.cwd, "a.py", "def f():\n    if x:\n        y()\n    }\n}\n" * 2, "닫는 줄")
+        self.assertEqual(job(self.cwd, "review-files", "main").returncode, 0)
+        lines = self.patch_text().splitlines()
+        self.t.prompt(MARKER)
+        self.t.tool("Bash", {"command": "head -n %d bug.patch" % (len(lines) - 2)}, result="\n".join(lines[:-2]))
+        self.t.tool("Bash", {"command": "tail -n 2 bug.patch"}, result="\n".join(lines[-2:]))
+        self.assertIsNone(self.gate())
+
     def test_오류로_끝난_code_review_호출은_부른_것이_아니다(self):
         self.t.tool("Skill", {"skill": "code-review", "args": "medium x"}, result="Unknown skill: code-review", error=True)
         self.assertIn("code-review 가 돈 흔적이 없다", self.denied())
@@ -678,6 +699,10 @@ class ReviewFilesTest(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         with open(os.path.join(self.cwd, ".fade-review", "bug.patch"), encoding="utf-8") as f:
             self.assertIn("+y", f.read())
+
+    def test_이_브랜치가_더한_diff_끄기_표시도_줄_수에서_빠지지_않는다(self):
+        out, _, _ = self.files(None, branch_attributes="b.py -diff\n", b_py="b = 1\nb2 = 2\n")
+        self.assertIn("2\t0\tb.py", out)
 
     def test_한글_이름_파일도_뺀_줄_수와_조각_목록이_바로_나온다(self):
         out, bug, _ = self.files("한글_생성.txt linguist-generated\n".replace("_생성", "생성"), **{"한글생성_txt": "1\n2\n"})

@@ -118,6 +118,11 @@ class DestructiveGateTest(unittest.TestCase):
                         "cd /no/such/dir; rm -rf .*"):
             self.assertBlocked(command, cwd=self.home)
 
+    def test_현재_폴더_변수로_가리킨_홈_삭제도_막는다(self):
+        for command in ('rm -rf "$PWD"', "rm -rf ${PWD}/*", 'rm -rf "$(pwd)"'):
+            self.assertBlocked(command, cwd=self.home)
+        self.assertAllowed('rm -rf "$PWD/build"', cwd=self.home)
+
     def test_감싸는_명령과_그_옵션_뒤의_삭제도_본다(self):
         for command in ("timeout 5 rm -rf ~", "sudo -u root rm -rf ~", "env -i rm -rf ~", "nice -n 10 rm -rf ~",
                         "time -p rm -rf ~", "sudo -E rm -rf /"):

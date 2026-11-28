@@ -88,6 +88,12 @@ class ParseTest(Repo):
         # 여러 줄 따옴표 글 안의 <<EOF 글자는 heredoc 이 아니다. 뒤 줄을 삼키지 않는다
         self.denied('git commit -m "a\nuse <<EOF here\nb"\ngit merge feat/x', self.main)
 
+    def test_달러_작은따옴표와_백틱_치환_안의_heredoc_도_훅을_죽이지_않는다(self):
+        for command in ("printf $'it\\'s'\ncat > n.md <<'EOF'\nsay \"hi\nEOF\ngit push origin HEAD:main",
+                        'git commit -m "`cat <<\'EOF\'\nsay "hi\nEOF\n`" && git push origin HEAD:main',
+                        "git commit -m \"$(cat <<'EOF'\nsay \"hi\nEOF)\" && git push origin HEAD:main"):
+            self.denied(command, self.wt)
+
     def test_따옴표_없는_heredoc_끝_글에_하이픈이_있어도_그_줄까지가_본문이다(self):
         self.assertIsNone(self.gate("cat > n.md <<END-NOTES\ngit merge feat/x\nEND-NOTES", self.main))
         self.denied("cat > n.md <<END-NOTES\nbody\nEND-NOTES\ngit merge feat/x", self.main)
