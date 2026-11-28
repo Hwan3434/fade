@@ -34,7 +34,7 @@ READ_PREFIX = re.compile(r"^ *\d+\t")  # Read 결과 줄의 번호 머리(cat -n
 BINARY = re.compile(r"^Binary files .* differ$")  # git 이 본문을 내지 않는 파일. 읽을 줄이 아니다
 # 해석하지 못한 명령이 job.py review 를 부르는 것으로 보이는가: 명령 자리(줄 첫머리나 ; & | ( 뒤, python 뒤)의 job.py review.
 # grep "job.py review 같은 다른 명령의 인자는 치지 않는다
-REVIEW_WORDS = re.compile(r"(?:^|[;&|(\n])\s*(?:\S*python\S*\s+(?:-\S+\s+)*)?\S*job\.py\s+review(?![-\w])")
+REVIEW_WORDS = re.compile(r"(?:^|[;&|(\n])\s*(?:\S*python\S*\s+(?:-\S+\s+)*)?\S*job\.py[\"']?\s+[\"']?review(?![-\w])")
 SLASH = "<command-name>/code-review</command-name>"  # 사용자가 /code-review 로 부른 흔적
 
 
@@ -82,8 +82,9 @@ def outputs_of(part):
     목록 하나로 낸다. 번호가 있으면 그 번호로 자리를 잡는다(짧은 출력이 같은 글자의 다른 자리에 맞지 않게)."""
     raw = [line.rstrip() for line in result_text(part).splitlines()]
     marks = [READ_PREFIX.match(line) for line in raw]
-    if raw and all(marks):
-        return [[(int(m.group(0).strip()), line[m.end():]) for m, line in zip(marks, raw)]]
+    # 줄 안의 \x0c 같은 글자로 줄이 쪼개지면 번호 없는 줄이 섞인다. 대부분 번호가 있으면 Read 결과로 본다
+    if raw and sum(1 for m in marks if m) >= 0.9 * len(raw):
+        return [[(int(m.group(0).strip()), line[m.end():]) for m, line in zip(marks, raw) if m]]
     return [raw]
 
 

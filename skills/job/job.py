@@ -775,7 +775,7 @@ def line_counts(cwd, revs, paths):
     if not paths:
         return {}
     # 경로를 인자로 넘기면 뺄 파일이 아주 많을 때 인자 한도를 넘는다. 전체를 만들고 그 파일만 센다
-    r = subprocess.run(["git", "-c", "core.quotePath=false", "diff", "-a", "--no-renames", *revs], cwd=cwd,
+    r = subprocess.run(["git", *DIFF_CONFIG, "diff", *DIFF_OPTIONS, "-a", *revs, "--"], cwd=cwd,
                        capture_output=True, text=True, errors="replace")
     wanted = set(paths)
     counts, name = {}, None
@@ -790,15 +790,24 @@ def line_counts(cwd, revs, paths):
     return counts
 
 
+# 리뷰용 diff 는 사용자의 git 설정에 흔들리지 않게 만든다. 이름 바꿈을 끄는 것은 경로로 거르기 때문이다(켜 두면 표시된
+# 폴더로 옮긴 파일의 지움이나 빼낸 파일의 새 내용이 새 경로 하나로 걸러져 빠진다)
+DIFF_CONFIG = ["-c", "core.quotePath=false", "-c", "diff.noprefix=false", "-c", "diff.mnemonicPrefix=false"]
+DIFF_OPTIONS = ["--no-renames", "--src-prefix=a/", "--dst-prefix=b/"]
+
+
 def review_diff(top, base, revs, skip):
     """리뷰용 diff. git 도 base 의 .gitattributes 로 만든다(브랜치가 더한 -diff, binary 로 내용을 숨기지 못하게).
     뺄 파일은 만든 뒤 걸러 낸다. 경로를 인자로 넘기면 아주 많을 때 인자 한도를 넘는다. (diff, 알림)."""
     note = ""
-    cmd = ["git", "-c", "core.quotePath=false", "--attr-source=" + base, "diff", *revs]
-    r = subprocess.run(cmd, cwd=top, capture_output=True, text=True)
+    cmd = ["git", *DIFF_CONFIG, "--attr-source=" + base, "diff", *DIFF_OPTIONS, *revs, "--"]
+    r = subprocess.run(cmd, cwd=top, capture_output=True, text=True, errors="replace")
     if r.returncode != 0 and "attr-source" in r.stderr:
         note = "이 git 은 --attr-source 를 몰라(git 2.42 전) diff 를 작업 트리의 .gitattributes 로 만들었다"
-        r = subprocess.run(cmd[:3] + cmd[4:], cwd=top, capture_output=True, text=True)
+        cmd.remove("--attr-source=" + base)
+        r = subprocess.run(cmd, cwd=top, capture_output=True, text=True, errors="replace")
+    if r.returncode != 0:
+        sys.exit("리뷰용 diff 를 만들지 못했다: " + r.stderr.strip())
     chunks = re.split(r"(?m)^(?=diff --git )", r.stdout)
     return "".join(c for c in chunks if not (c.startswith("diff --git ") and
                                               patch_file(c.split("\n", 1)[0]) in skip)), note

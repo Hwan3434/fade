@@ -90,7 +90,8 @@ def admin_worktree(folder):
     """git 관리 폴더(.git/worktrees/<이름>)면 그 gitdir 이 가리키는 워크트리. 아니면 None."""
     try:
         with open(os.path.join(folder, "gitdir"), encoding="utf-8") as f:
-            return os.path.dirname(os.path.realpath(f.read().strip()))
+            # --relative-paths 로 만든 워크트리는 gitdir 이 관리 폴더 기준의 상대 경로다
+            return os.path.dirname(os.path.realpath(os.path.join(folder, f.read().strip())))
     except OSError:
         return None
 
@@ -112,10 +113,14 @@ def worktrees_under(path):
             wt = os.path.realpath(line[len("worktree "):]) if line.startswith("worktree ") else None
             if wt and (wt == real or wt.startswith(real.rstrip("/") + "/")):
                 found.add(wt)
-    else:  # 레포 밖의 git 아닌 폴더: 두 단계 아래까지의 워크트리(.git 이 파일인 폴더)
+    else:  # git 아닌 폴더: 두 단계 아래까지의 워크트리(.git 이 파일)와 레포(.git 이 폴더. 그 레포의 워크트리 모두)
         for marker in glob.glob(os.path.join(real, "*", ".git")) + glob.glob(os.path.join(real, "*", "*", ".git")):
             if os.path.isfile(marker):
                 found.add(os.path.dirname(marker))
+            elif os.path.isdir(marker):
+                for line in merge_gate.git_out(os.path.dirname(marker), "worktree", "list", "--porcelain").splitlines():
+                    if line.startswith("worktree "):
+                        found.add(os.path.realpath(line[len("worktree "):]))
     out = []
     for wt in sorted(found):
         state = job.load(wt) if os.path.isdir(wt) and job.git_dir(wt) else None
@@ -125,8 +130,8 @@ def worktrees_under(path):
 
 
 def expanded(here, target):
-    """rm 의 대상 하나를 셸처럼 펼친 경로들: 홈($HOME, ~), 중괄호({a,b}), 글롭(*, ?, [...]). 글롭이 아무것도 맞지
-    않으면 그 폴더(끝 이름이 글롭뿐인 rm -rf dir/* 와 같다)."""
+    """rm 의 대상 하나를 셸처럼 펼친 경로들: 홈($HOME, ~), 중괄호({a,b}), 글롭(*, ?, [...]). 끝 이름이 글롭뿐이면
+    (dir/*, dir/.*) 그 폴더째로 보고, 이름이 붙은 글롭은 맞는 것들로 펼친다(맞는 것이 없으면 지우는 것이 없다)."""
     target = merge_gate.expand_home(target)
     if here is None and not os.path.isabs(target):
         return []
@@ -135,9 +140,10 @@ def expanded(here, target):
         return [p for alt in m.group(1).split(",")
                 for p in expanded(here, target[:m.start()] + alt + target[m.end():])]
     path = os.path.normpath(os.path.join(here or "/", target))
-    if any(c in path for c in "*?["):
-        return sorted(glob.glob(path)) or [os.path.dirname(path)]
-    return [path]
+    base = os.path.basename(path)
+    if any(c in base for c in "*?[") and not any(c.isalnum() for c in base):
+        return [os.path.dirname(path)]  # 끝 이름이 글롭뿐이면(*, .*) 그 폴더 안 전부라 그 폴더째로 본다
+    return sorted(glob.glob(path)) if any(c in path for c in "*?[") else [path]
 
 
 def removed(here, seg):

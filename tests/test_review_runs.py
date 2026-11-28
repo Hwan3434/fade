@@ -651,10 +651,8 @@ class ReviewFilesTest(unittest.TestCase):
         subprocess.run(["git", "switch", "-q", "main"], cwd=self.cwd, check=True)
         commit_file(self.cwd, ".gitattributes", "gen/** linguist-generated\n", "표시")
         commit_file(self.cwd, "gen/old.py", "".join("g%d = %d\n" % (i, i) for i in range(30)), "생성")
-        subprocess.run(["git", "switch", "-q", "feat/x"], cwd=self.cwd, check=True)
-        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid", "merge", "-q", "--no-edit",
-                        "main"], cwd=self.cwd, check=True)
         commit_file(self.cwd, "src/x.py", "".join("s%d = %d\n" % (i, i) for i in range(30)), "소스")
+        subprocess.run(["git", "switch", "-q", "feat/x"], cwd=self.cwd, check=True)
         subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid", "merge", "-q", "--no-edit",
                         "main"], cwd=self.cwd, check=True)
         git = ["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid"]
