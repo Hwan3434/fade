@@ -68,7 +68,7 @@ class RecordOutputTest(unittest.TestCase):
 
     def test_log_는_성공하면_명령_출력을_찍지_않고_종료_코드와_로그_경로만_알린다(self):
         self.short("start", "작업")
-        out = self.short("log", "기준", "seq 1 60 | sed s/^/줄=/")
+        out = self.short("log", "기준", "for i in $(seq 1 60); do echo 줄=$i; done")
         self.assertNotIn("줄=60", out)  # 명령 글이 아니라 출력에만 나오는 글자
         self.assertIn("종료 코드 0", out)
         self.assertIn("01.log", out)

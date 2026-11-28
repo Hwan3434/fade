@@ -178,7 +178,7 @@ class GateTest(unittest.TestCase):
         self.read_patch(shown=(1, n - 2))
         self.read_patch(shown=(1, n - 2))
         self.denied()
-        self.read_patch(offset=n - 2, limit=2)
+        self.read_patch(offset=n - 1, limit=2)
         self.assertIsNone(self.gate())
 
     def test_여러_hunk_파일을_읽다_잘리면_잘린_출력이라고_말한다(self):
