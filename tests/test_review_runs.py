@@ -835,12 +835,6 @@ class TextTest(unittest.TestCase):
         for word in ("parts/", "linguist-generated", ".gitattributes", "명세 리뷰어", "쪼갤 것을 권한다"):
             self.assertIn(word, review, word)
 
-    def test_README_가_뺀_파일과_나눈_리뷰를_말한다(self):
-        for name in READMES:
-            text = self.read(name)
-            for word in ("linguist-generated", "parts/"):
-                self.assertIn(word, text, (name, word))
-
     def test_파이썬_파일이_문법_경고를_내지_않는다(self):
         # "\$" 같은 잘못된 이스케이프는 Python 3.12 부터 SyntaxWarning 이다
         import glob

@@ -283,18 +283,6 @@ class DispatchConditionsTest(unittest.TestCase):
         for word in self.METHOD_WORDS:
             self.assertNotIn(word, self.text, word)
 
-    def test_README_의_dispatch_설명과_원칙에_특정_방법의_이름이_없다(self):
-        for name in READMES:
-            text = read(name)
-            self.assertNotIn("Remote Control", text, name)
-            lines = [l for l in text.splitlines() if l.startswith("- `dispatch`")]
-            # 원칙 목록의 「여러 레포에서 같은 본문으로 쓰는 것만 담는다」 줄(어느 앱에서 도는지 정하지 않는다)
-            lines += [l for l in text.splitlines() if l.startswith("- ") and ("같은 본문" in l or "same text" in l)]
-            self.assertEqual(len(lines), 2, name)
-            for line in lines:
-                for word in self.METHOD_WORDS + ("desktop app", "session tool"):
-                    self.assertNotIn(word, line, (name, word))
-
     def test_조건_표가_남아_있다(self):
         table = section(self.text, "2. 워커 띄우기")
         for word in self.CONDITIONS:
@@ -338,11 +326,6 @@ class EnvironmentWordsTest(unittest.TestCase):
         for name in READMES:
             self.assertIn("Windows", read(name), name)
 
-    def test_README_의_dispatch_줄에_지운_같은_폴더_워커_문장이_없다(self):
-        for name in READMES:
-            line = next(l for l in read(name).splitlines() if l.startswith("- `dispatch`"))
-            for word in ("리드와 같은 폴더", "직접 만든다", "same folder as the lead"):
-                self.assertNotIn(word, line, (name, word))
 
 
 class RepoWayTest(unittest.TestCase):

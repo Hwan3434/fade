@@ -2,7 +2,8 @@
 
 [한국어](README.md)
 
-A skill plugin for Claude Code only. It is not tied to any one app; it works wherever Claude Code runs locally. If you use another agent, read the skills and adapt them to your environment. It was not built to gain features; it was built to shrink.
+A plugin for Claude Code only. It holds the way a lead and its workers work, from test-first through merge, and the record script and hooks that guard that way of working. It was not built to gain features; it was built to shrink.
+
 The goal is to delete prose as models get smarter until no lines are left, hence the name fade. What shrinks is the prose. The structure that guards the process (scripts, hooks, tests) stays.
 
 ## Why it exists
@@ -23,52 +24,74 @@ The goal is to delete prose as models get smarter until no lines are left, hence
 
 > Trying to control agents with prose. That is the heart of it.
 
+## Where it is used
+
+| | |
+|---|---|
+| Agent | Claude Code only. If you use another agent, read the skills and adapt them |
+| App | Not fixed. Terminal or app, it is the same wherever Claude Code runs |
+| Install | Once, into a person's Claude Code. A repo holds no files for fade |
+| Run | Local only. Cloud sessions do not load plugins, so neither lead nor worker runs there |
+| OS | macOS and Linux. On Windows the hooks and `job.py` do not run |
+
 ## How it is built
 
-- Guarding a repo (static checks, hooks, lint, tests, verification tools) is that repo's job. fade holds only how a lead and its workers work on top of it.
-- That way of working is also guarded by structure rather than prose. `job`'s stage record is kept by a script (`job.py`) that records only what it confirmed by running the test command itself, and right before a merge a hook checks that record and CI. The only structure fade ships is fade's own work format, which has nothing to do with any particular repo, and one hook that blocks a few irreversible commands in every session.
-- Even a rule that prose could enforce is taken out of the skills when a check can enforce it. It goes first to the repo's checks, and anything that differs per person goes to that person's settings. What stays in the skills is process alone.
-- So it only works well in repos that have those checks. `nonstop`, which runs with no one watching, stops only by refusing actions the repo asks to confirm; in a repo without such checks, nothing stops those actions.
-- Values that differ per repo or per person (base branch, merge method, branch names, how to verify) are not written down. The repo's rules and the person's settings decide them, and the model reads and follows them.
-- A line is added only when the failure it prevents has been seen in a real session. Lines describing what the model already does are deleted.
-- Only what is used with the same text across many repos goes in. It does not decide which app it runs in. It states only the conditions to meet, and the model picks a way to meet them from what the environment offers.
+- Guarding a repo (static checks, hooks, lint, tests) is that repo's job. fade holds only how a lead and its workers work on top of it.
+- That way of working is also guarded by structure rather than prose. `job.py` records only what it confirmed by running the command itself, and right before a merge a hook checks that record and CI.
+- A rule that a check can enforce is taken out of the skills and sent to a check. The repo's checks come first, and what differs per person belongs to that person's settings.
+- Values that differ per repo or per person (base branch, merge method, branch names, model) are not written down. The repo's rules and the person's settings decide them.
+- Adding a line requires a failure it prevents, confirmed in a real session. The same goes for hooks.
+- The hooks are a guardrail against mistakes, not a security boundary. They do not catch commands hidden in `bash -c` or a script, and do not try to.
+- It only works properly in a repo that has its checks in place.
 
 ## Where it is going
 
-- With every new model, try deleting lines one by one. If the model does the job without a line, that line does not come back.
-- Lines are added only when a failure is confirmed. Even added lines are future candidates for deletion.
-- Structure that is no longer used is deleted too. But a check is not deleted just because models got better.
-- When the skills disappear one by one and the last line is deleted, that is when this plugin is finished.
+- With every new model, try deleting one line. If the model manages without it, the line does not come back.
+- Lines are added only when a failure has been confirmed. An added line is still a candidate for deletion someday.
+- Structure is deleted too once it is no longer used. But a check is never deleted just because models got better.
+- When the last line is gone, that is when this plugin is finished.
 
 ## Skills
 
-- `job`: the smallest unit of work. Takes one plan and carries it through tests first, implementation, evidence, trying it by hand, and code review repeated until no blocking finding is left, then PR, merge, and report. The review always runs the bug axis; whether to add the spec axis is not decided by a fixed rule such as a line count but by the reviewing side itself, from the nature of the change (does it touch several completion criteria, does it change behavior or only text, does it touch a place that goes silently wrong such as merge conditions or hooks, can it be read in one pass). When it decides not to, it records the reason in the review record. The bug axis reads `bug.patch`, written by `job.py review-files` (the whole diff against the base, tests and text included, on the first review; after the last accepted review on later ones), to the end. Each finding is checked against the plan: a finding that would overturn what the plan decided is not fixed but written down as "against a decision", and if the decision itself looks wrong it goes to the report's "decisions needed". After a fix, only the fixed part is reviewed again, and only the evidence and tries that depend on the changed paths are redone. While review is still running only blocking findings are fixed; minor findings are collected and fixed in one commit once no blocking finding is left, and that commit alone is then checked on the bug axis. Answers from agents such as the reviewer and the tester are waited for without ending the turn. If it cannot solve a problem or needs the user's decision, it stops there and reports. If the user narrows the scope (for example "PR only"), it does only that much. The report does not repeat the full record; its first line is the address of the record comment posted on the PR or, without a PR or when the comment fails, the path of the record file. Questions asked of the user are recorded, and any still unanswered are repeated, numbered, right after that address. The PR body is a summary for people (the result, whether it can be undone, the important choices and why, what could not be fixed, one line per completion criterion) and does not carry the full record. Commits are not made once at the end but split at each step with its own meaning, such as the failing test, the implementation, and each blocking-finding fix, and each message says what changed and why.
-- `try`: starts the `tester` agent to use the result the way the user would, and leaves screens and logs for each case.
-- `harden`: stops a mistake the AI made with a check (lint, test, hook, permission settings) instead of adding prose to the instructions.
-- `grill`: asks about every decision left before execution, numbered and with a recommended answer, until none remain.
-- `dispatch`: hands a code change to a new session (a worker) running in the repo's worktree as a `job` plan, and checks the evidence the worker left on the PR or in the record file against the done criteria. It starts a worker with whatever way the current environment offers that meets every condition (its own worktree, the same environment, runs to the end unattended, the lead knows when it ends, the lead can talk to it, the user can take it over); if no way meets them, it does not start one and says what is missing. It never starts a worker with permission checks turned off, and when a start gives an unclear result it checks what was actually created before trying again. It sets the worker's model from what the user said this time, or else from the user's instruction files; if neither names one, it tells the user before starting that the worker will inherit the lead's model. Before starting one, a fresh subagent looks for gaps in the plan; after the worker finishes, it passes `hardener`'s check proposals on to the user. Once the PR is merged or closed, it cleans up the worker's worktree, the merged work branch, and the worker session without asking (it deletes nothing that has uncommitted changes or commits missing from the remote). It does not send a message adding criteria to a worker that is still running, because the notice for that worker's previous report would be lost. If it did message a running worker, it finds that worker's last full report and relays it to the user.
-- `debug`: starts by building one failing command, then diagnoses the bug in a fixed order.
-- `nonstop`: works through a task list to the end with no one watching, running each task as a `job`. Only for when the user invokes it directly. Each time a task is merged, it removes that task's worktree and branch after the same checks as `dispatch`'s cleanup. Tasks scoped to a PR, and held or blocked tasks, are left in place.
+| Skill | What it does |
+|---|---|
+| `job` | The smallest unit of work. Takes one plan and carries it through test-first, implementation, evidence, trying it by hand, code review, PR, merge, and report. If you narrow the scope ("up to the PR only"), it does only that much |
+| `dispatch` | Hands a code change to a new session (a worker) running in a worktree of that repo, and checks the evidence the worker left against the done criteria |
+| `nonstop` | Runs a task list to the end with nobody watching, doing a `job` for each task |
+| `try` | Uses the result the way a user would and leaves screens and logs |
+| `harden` | Blocks a mistake the AI made with a check (lint, test, hook, permission setting) instead of prose in the instructions |
+| `debug` | Starts from one failing command and diagnoses a bug in a fixed order |
+| `grill` | Asks every remaining decision before execution |
+
+The detailed order is in each skill's `SKILL.md`.
 
 ## Agents
 
-Subagents that the skills start. Their definitions are in `agents/`. They do not set a model; they run on the model the user chose.
+Subagents the skills launch. No model is fixed.
 
-- `reviewer`: the spec-axis reviewer for `job`. It does not trust the implementer's report; it checks the plan against the diff item by item, looking first at whether the spec is met (missing, extra, misunderstood) and then at test quality. Each finding is marked blocking or minor. Its tools are read-only (Read, Grep, Glob).
-- `tester`: uses the result the way a user would and only reports. It writes scenarios first and leaves screens and output under `fade-try/` in the worktree's git directory. Files in a temporary folder outside the repo can disappear, so `job.py` does not accept them as evidence. Its editing tools (Edit, Write, NotebookEdit) are removed.
-- `hardener`: groups the mistakes of finished work in the mistake log by key, and when the same key shows up twice or more, or the mistake could happen to anyone, proposes a check in `harden`'s order. It only proposes and does not fix.
+| Agent | What it does |
+|---|---|
+| `reviewer` | Does not trust the implementer's report; checks the plan against the diff. Read-only |
+| `tester` | Uses the result like a user and only reports. Does not fix |
+| `hardener` | Groups the mistakes of finished work and drafts check proposals. Proposes only |
 
 ## Structure
 
-- `bin/`: while the plugin is enabled, Claude Code puts this folder on the Bash tool's PATH. It holds entry points that let `job.py` and `nonstop.py` be called without a path; the real scripts live under `skills/`.
-- `skills/job/job.py`: `job`'s stage record. A failure before implementation (red) and a pass after it (green) are recorded only after running the command itself. red prints the end of the failure output, and green is refused when no file's content changed after red (the implementation was there before red, or something outside the repo changed). An implementation committed before red, or a pass made by editing only the test, cannot be told apart, because which files are tests differs by repo. Evidence and hands-on tries are recorded only with files. For the merge, green and review count only when taken at the current commit. Evidence and tries recorded with the paths they depend on (`--paths`) stay valid as long as those paths have not changed since the commit they were taken at; without paths they count only at the current commit. `review-files` reports material for deciding whether to launch the spec reviewer: the line count of the diff against the base and the number and list of changed files, and from the second review on it writes only the part fixed since the last commit the spec reviewer saw. Files the base's `.gitattributes` marks as `linguist-generated`, `-diff`, or `binary` (generated files, lock files) are left out of the review diffs, and their names and line counts stay in the output and in `show`. Marks this branch adds apply only to work after it is merged, so a branch cannot leave its own files out. Reading the base's marks needs git 2.40 or later, and building the diff with the base's marks needs 2.42 or later; below those, nothing is left out, or the diff uses the working tree's marks with a notice. fade keeps no list of file names or extensions, and leaves nothing out when the repo marks nothing. When `bug.patch` is over 20000 bytes it also writes pieces split at file boundaries to `.fade-review/parts/`, so that code-review is called once per piece. `review --minor` records the bug-axis review of the single commit that fixes the collected minor findings, and it counts as the review the merge conditions require. `review --spec` records a review the spec reviewer also saw, and a review with neither `--spec` nor `--minor` is recorded only when its summary gives the reason the spec reviewer was not launched. `review` is refused when fewer blocking findings remain than in the last review but neither a slip nor a new red came in between; blocking findings left unfixed as false positives or against a decision are given as `--dropped=<count>`. Options are read whether they come before or after the other arguments (except `--paths`, which takes every argument after it as a path and so goes last), and an unknown option is rejected by every command. To pass a single word starting with `--` as a value such as a title or reason, put a separate `--` before it. A merge also needs a reversibility record (`door`); if it is a one-way door (cannot be undone), the user decides the merge. Recording commands print only a line or two about what they recorded (`log` adds the end of the output only when the command failed, and `red` always adds the end of the failure output), plus one line when unanswered questions remain. The whole record comes only from `show`, and what is still missing before merge only from `check`. The first line of `show` is the status, and its default output is one line per completion criterion. Full commands and logs appear with `show --full`, and `show --save` writes that full text to a file in the main checkout's git folder so it survives the worktree's removal. The record lives in the worktree's git directory and is never committed. `human-done` resolves a thing for a person to check after a person has checked it and records who resolved it on what grounds. `contrasted` and `hardened` record the lead's check of the worker's record against the completion criteria and the hardener result. `resume` lifts a stop (`stop`) after a person has checked it. `log` and `red` refuse commands with a pipe (`|`), scripts in the OS temporary folder outside the repo, and lead-only records. The record is locked between reading, changing, and saving, so running several at once loses nothing. `ask` records a question asked of the user and `answered` records the answer. Unanswered questions appear, numbered, right below the status line of `show`.
-- `hooks/merge_gate.py`: right before a merge into the base branch, checks the `job` record of that job's worktree. For `gh pr merge` it also checks CI and whether the PR's latest commit is the local HEAD that was verified. It also checks a `git merge` of a job branch run where the base branch is checked out, and a `git push` of a job branch to the base branch, for work that lands without a PR (a `git merge` of the base into a job branch is not checked). The record is looked up not only in the session's current folder but in the folder the command points at (`cd`, `git -C`) and in the worktree where the merged branch (for `gh pr merge`, the PR's branch) is checked out. If something is missing, or the job was "PR only", it blocks the merge, says why, and writes it to the mistake log. Where there is no `job` record it does nothing. It is a guard rail against mistakes, not a security boundary.
-- `hooks/review_gate.py`: right before `job.py review`, checks in the session transcript that the bug-axis review (`code-review`) really read the diff. "Read" is judged by content, not by tool name: in the transcript files where the code-review prompt appears after the last accepted review, the tool outputs received after it (cat, Read, `git diff`, or reading in parts, including output of commands that exited non-zero) must together contain every line of `bug.patch`, each output matched to `bug.patch` by position (Read by its line numbers), so reading the same start twice does not count as reading the rest. A code-review call that ended in an error does not count as a call. A review recorded again on the same commit is judged by what the earlier review read. A large diff reviewed with code-review once per piece is judged by the sum. Truncated output counts only as the part it shows, and a block names the line ranges never shown, their files, and what to read next. Reads outside code-review by the spec reviewer or the main session do not count (in the desktop app the prompt stays in the main transcript, so output the main session receives after it does count). When only marked files changed and `bug.patch` is empty, it accepts. When it cannot judge (no transcript, no `bug.patch`, code-review called but its prompt heading not found, the repo under the OS temporary folder, the hook failing) it does not block but tells the agent and the user why. It prints nothing for commands other than `job.py review`. Each block is written to the mistake log.
-- `hooks/permission_gate.py`: in an unattended `job` (`job.py start --unattended`), when a permission prompt is about to appear it denies it instead of waiting. If the blocked step is essential to a completion criterion the job reports where it was blocked and ends; if it is a side step, the job drops that step and carries on. Each denial is written to the mistake log. The record is looked up in the session's current folder, the folder the command points at (`cd`, `git -C`), and the folder of the file a file tool edits. In any other session it does nothing.
-- `hooks/destructive_gate.py`: **runs on every Bash call in every session where fade is installed.** It is the only fade hook that changes a session's behavior regardless of `job`. It denies recursive deletion of the root, your home or any folder above it, or `~/.ssh`; force pushes to the default branch (main, master, or the repo's default branch); `dd` writing to a device; and `mkfs`. It reads commands the same way as the merge hook (quoted text and heredoc bodies are not commands, redirects are dropped, and `cd` on the same line is followed). After a `cd` whose folder cannot be known (a shell variable, a command substitution, or a missing folder joined by something other than `&&`), it also denies relative paths that delete that folder itself or above (`.`, `*`, `..`). It only denies and never allows; if such a command is really needed, the user types it in a terminal. To turn it off, disable the fade plugin.
-- `hooks/lead_gate.py`: keeps the session that ran a `job` from doing what only a person or the lead does. A worker started by dispatch (even with a person present), and the session of an unattended job whose transcript clearly shows `job.py start` run in that worktree (subagents included), cannot record that job's `job.py human-done`, `contrasted`, `hardened`, or `resume`. Direct calls and calls wrapped in `log` or `red` are blocked; `bash -c`, `eval`, and calls held in a shell variable are not. A merged worker's worktree cannot be removed with `git worktree remove` or a whole-folder `rm -r` until the lead's `contrasted` and `hardened` records exist. Cleaning up a job this session started (`nonstop`) is not blocked, but a worker started with the dispatch instruction needs the lead's records even when a person is present. Unmerged jobs, and worktrees without a `job` record are not blocked. Who started a job is found from the `job.py start` run in that worktree in the session transcript; a `start` whose folder cannot be known (for example after a `cd` through a shell variable) does not count, so nothing is guessed (an unattended session that ran `start` that way can record lead-only entries itself; the lead filters those when reading the report), and without a transcript nothing is blocked. An environment that removes the worktree while closing a session does so outside Bash, so this hook cannot stop it.
-- Mistake log `~/.claude/fade/mistakes.jsonl`: one line per mistake, collected across repos and jobs. It is written when the merge hook or the permission hook blocks something, by `job.py stop`, and by `job.py slip` (blocking review findings that were fixed, CI failures, bugs found while trying it, mistakes the user points out). `slip` takes a key (a name that groups the same mistake) and writes it too; `hardener` fills in the key and handling of lines written by the hooks and `stop`. `job.py pr` fills in the PR of lines written before the PR was opened. The `FADE_MISTAKES` environment variable changes the path. When the repo is under the OS temporary folder (tests, tries), nothing is written while `FADE_MISTAKES` is unset. A session started for a try with `FADE_TRY_REPO=<repo to try>` cannot touch job records outside that repo, and does not write the default log either. The `show` output that goes onto public PRs hides the user name in the home path and in folder names Claude makes from paths (`-Users-<name>-`).
-- `tests/`: tests for the scripts and hooks above, the agent definitions, and `nonstop.py`, run by GitHub Actions on every PR.
+| File | What it guards |
+|---|---|
+| `skills/job/job.py` | The work record. Test failure and pass are recorded only when confirmed by running the command itself. The record lives in the worktree's git folder, so it is never committed |
+| `hooks/merge_gate.py` | Right before a merge, checks that work's record and CI. Blocks if anything is missing |
+| `hooks/review_gate.py` | Right before a review is recorded, checks that the review really read the diff to the end |
+| `hooks/lead_gate.py` | Keeps a worker from doing the lead's work itself (clearing a human check, the comparison, deleting a merged worktree) |
+| `hooks/permission_gate.py` | In work with nobody watching, refuses an approval prompt instead of waiting on it |
+| `hooks/destructive_gate.py` | Blocks a few irreversible commands, such as deleting the home folder or force-pushing to the default branch. **The only hook that applies to every session with fade installed** |
+| `bin/` | The entry point that lets `job.py` and `nonstop.py` be called without a path |
+| `tests/` | Tests for all of the above. Run on every PR |
+
+- The first four judge only in a worktree that has a `job` record. Where `job` is not used, they do nothing.
+- If a hook crashes, it does not block and hands over to the normal permission flow.
+- What each hook blocks and cannot block is in the header comment of its file. Calling `job.py` with no arguments lists its commands.
+- Mistakes pile up in `~/.claude/fade/mistakes.jsonl`. A line is added when a hook blocks and for each finding fixed in review, and `hardener` groups them.
 
 ## Install
 
@@ -80,17 +103,14 @@ claude plugin marketplace add Hwan3434/fade
 claude plugin install fade@fade
 ```
 
-fade is not added to a repo. It is a plugin installed once, at user scope, in a person's Claude Code and used across all their repos. A repo holds no files for fade (job records stay in the git folder, which is not committed). Each repo owns its rules and checks; fade only carries the way of working on top of them. So fade works only in Claude Code running locally. Cloud sessions do not load plugins, so neither the lead nor the workers run in the cloud.
-
-fade runs on macOS and Linux. `job.py` and the hooks use `fcntl` for file locks, so on Windows the hooks end in an error and block nothing, and `job.py` does not run.
+To turn it off, disable the plugin. A single hook cannot be turned off on its own.
 
 ## Credits
 
-- [mattpocock/skills](https://github.com/mattpocock/skills): `grill` started from `grilling`, and `debug` from `diagnosing-bugs`. The spec axis of `code-review` became `reviewer`'s spec check, `tdd`'s test rules (expected values as independent constants, never mocking your own module) became `reviewer`'s test-quality check, `retro` became `hardener`, and the Merge Danger section of `pr` (one-way or two-way door, blast radius) became `job.py door`.
-- [obra/superpowers](https://github.com/obra/superpowers): the reviewer in `subagent-driven-development` (does not trust the implementer's report and checks the diff) became `reviewer`, and the builder check in `brainstorming` became `dispatch`'s plan gap check.
-- [garrytan/gstack](https://github.com/garrytan/gstack): `careful` became the destructive command hook, `qa-only` became `tester`, and the PR commit check in `land-and-deploy` became part of the merge hook.
-- `pstack` in [cursor/plugins](https://github.com/cursor/plugins): the approach of shipping no checks.
-- [poteto/verification-skill-example](https://github.com/poteto/verification-skill-example): the model for verification skills.
+- [mattpocock/skills](https://github.com/mattpocock/skills): `grill`, `debug`, the `reviewer` criteria, `hardener`, and whether a change can be undone (`job.py door`).
+- [obra/superpowers](https://github.com/obra/superpowers): the reviewer that does not trust reports, the blank-spot check on plans.
+- [garrytan/gstack](https://github.com/garrytan/gstack): the destructive-command hook, `tester`, checking the PR commit before merge.
+- [cursor/plugins](https://github.com/cursor/plugins)' `pstack`, [poteto/verification-skill-example](https://github.com/poteto/verification-skill-example).
 
 ## License
 
