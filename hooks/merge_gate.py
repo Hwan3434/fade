@@ -74,7 +74,9 @@ def without_heredoc_bodies(command):
                     body = line.lstrip("\t") if strip_tabs else line
                     if body.strip() == end:
                         break
-                    if body.startswith(end) and body[len(end):].lstrip().startswith(")"):
+                    # 명령 치환($( 나 백틱) 안에서 연 heredoc 만 EOF)" 줄에서 끝난다. 맨 위 heredoc 은 끝나지 않는다
+                    if any(s in ("$(", "`") for s in stack) and body.startswith(end) \
+                            and body[len(end):].lstrip().startswith(")"):
                         i = start + (len(line) - len(body)) + len(end)  # EOF)" : 끝 글 뒤의 ) 부터 다시 읽는다
                         break
             pending = []

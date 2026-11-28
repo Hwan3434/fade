@@ -22,7 +22,8 @@ git_out = merge_gate.git_out
 def resolve(arg, cwd, home):
     """인자를 셸이 펼칠 절대 경로로 바꾼다. 끝 이름이 글자 없이 글롭뿐이면(`*`, `.*`, `.[!.]*`) 그 폴더 안 전부라
     폴더를 돌려준다. `*.bak` 처럼 이름이 걸린 글롭은 폴더 전체가 아니다."""
-    path = os.path.normpath(os.path.join(cwd, merge_gate.expand_home(arg, home, cwd if cwd != UNKNOWN else None)))
+    # 폴더를 알 수 없으면 $PWD 도 그 알 수 없는 폴더다(UNKNOWN 으로 펼쳐 그 폴더째 지우기로 본다)
+    path = os.path.normpath(os.path.join(cwd, merge_gate.expand_home(arg, home, cwd)))
     if path.startswith("//"):
         path = "/" + path.lstrip("/")
     base = os.path.basename(path)

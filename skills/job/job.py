@@ -219,6 +219,10 @@ def unquoted_pipe(command):
         if c == "\\" and quote != "'":
             i += 2
             continue
+        if quote is None and c == "#" and (i == 0 or command[i - 1].isspace()):  # 주석은 줄 끝까지 건너뛴다
+            j = command.find("\n", i)
+            i = n if j < 0 else j
+            continue
         if c in "'\"" and quote in (None, c):
             quote = None if quote else c
         elif quote != "'" and command.startswith("$(", i):
@@ -240,6 +244,8 @@ def unquoted_pipe(command):
 
 OPERATORS = {";", "&", "&&", "|", "||", "|&", "(", ")", "\n"}
 INTERPRETERS = re.compile(r"^(sh|bash|zsh|dash|python\S*|node|ruby|perl|source|\.)$")
+# 명령을 감싸는 명령: 그 옵션(과 timeout 의 시간, nice 의 값)을 건너뛴 다음 낱말이 명령 자리다
+WRAPPING = re.compile(r"^(timeout|env|nice|nohup|sudo|time|command|exec|stdbuf|ionice|xargs)$")
 
 
 def command_words(command):
@@ -252,18 +258,21 @@ def command_words(command):
         tokens = list(lex)
     except ValueError:
         return None
-    words, at_command = [], True
+    words, at_command, wrapped = [], True, False
     for tok in tokens:
         if tok in OPERATORS or set(tok) <= set(";&|()\n"):
-            at_command = True
+            at_command, wrapped = True, False
             continue
-        if at_command and "=" in tok and not tok.startswith("-"):
+        if not at_command:
             continue
-        if at_command:
-            words.append(tok)
-            at_command = bool(INTERPRETERS.match(os.path.basename(tok)))
-        elif tok.startswith("-"):
-            continue
+        if "=" in tok and not tok.startswith("-"):
+            continue  # 환경 변수 지정
+        if tok.startswith("-") or (wrapped and re.fullmatch(r"\d+[smhd]?|-?\d+", tok)):
+            continue  # 해석기나 감싸는 명령의 옵션, timeout 의 시간, nice 의 값
+        words.append(tok)
+        name = os.path.basename(tok)
+        wrapped = bool(WRAPPING.match(name))
+        at_command = wrapped or bool(INTERPRETERS.match(name))
     return words, tokens
 
 
