@@ -33,6 +33,7 @@ The goal is to delete prose as models get smarter until no lines are left, hence
 | Install | Once, into a person's Claude Code. A repo holds no files for fade |
 | Run | Local only. Cloud sessions do not load plugins, so neither lead nor worker runs there |
 | OS | macOS and Linux. On Windows the hooks and `job.py` do not run |
+| Checked with | Workers were run and checked on Claude Opus 5.5. On a lower model, mistakes that deleted lines used to prevent may come back |
 
 ## How it is built
 
