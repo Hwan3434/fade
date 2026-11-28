@@ -1,10 +1,8 @@
 import json
 import os
-import subprocess
-import sys
 import unittest
 
-from helpers import PERMISSION, commit_and_switch, git_repo, job, mistakes
+from helpers import PERMISSION, commit_and_switch, git_repo, hook, job, mistakes
 
 
 class PermissionGateTest(unittest.TestCase):
@@ -13,11 +11,10 @@ class PermissionGateTest(unittest.TestCase):
         self.addCleanup(self.repo.cleanup)
         self.cwd = self.repo.name
 
-    def ask(self, command="git rebase origin/main", env=None):
+    def ask(self, command="git rebase origin/main", env=None, crash=False):
         payload = {"hook_event_name": "PermissionRequest", "tool_name": "Bash", "cwd": self.cwd,
                    "tool_input": {"command": command}}
-        r = subprocess.run([sys.executable, PERMISSION], input=json.dumps(payload), capture_output=True, text=True,
-                           env=env)
+        r = hook(PERMISSION, json.dumps(payload), env=env, crash=crash)
         self.assertEqual(r.returncode, 0, r.stderr)
         return json.loads(r.stdout)["hookSpecificOutput"] if r.stdout.strip() else None
 
@@ -60,11 +57,11 @@ class PermissionGateTest(unittest.TestCase):
         job(self.cwd, "start", "작업", "--unattended")
         blocker = os.path.join(self.cwd, "file")
         open(blocker, "w").close()
-        out = self.ask(env=dict(os.environ, FADE_MISTAKES=os.path.join(blocker, "mistakes.jsonl")))
+        out = self.ask(env=dict(os.environ, FADE_MISTAKES=os.path.join(blocker, "mistakes.jsonl")), crash=True)
         self.assertEqual(out["decision"]["behavior"], "deny")
 
     def test_입력이_깨져도_막지_않는다(self):
-        r = subprocess.run([sys.executable, PERMISSION], input="{깨진", capture_output=True, text=True)
+        r = hook(PERMISSION, "{깨진", crash=True)
         self.assertEqual(r.returncode, 0)
         self.assertEqual(r.stdout.strip(), "")
 

@@ -2,12 +2,11 @@
 import json
 import os
 import subprocess
-import sys
 import tempfile
 import time
 import unittest
 
-from helpers import ROOT, commit_and_switch, commit_file, job
+from helpers import ROOT, commit_and_switch, commit_file, hook, job
 
 REVIEW_GATE = os.path.join(ROOT, "hooks", "review_gate.py")
 MARKER = "## Phase 0 — Gather the diff"  # code-review 스킬의 지시문 머리. 앱에서는 본체 기록에, CLI 에서는 하위 에이전트 기록에 든다
@@ -74,7 +73,7 @@ class GateTest(unittest.TestCase):
     def gate(self, command="job.py review 0 \"버그 축만\""):
         payload = {"hook_event_name": "PreToolUse", "tool_name": "Bash", "cwd": self.cwd, "transcript_path": self.t.path,
                    "tool_input": {"command": command}}
-        r = subprocess.run([sys.executable, REVIEW_GATE], input=json.dumps(payload), capture_output=True, text=True)
+        r = hook(REVIEW_GATE, json.dumps(payload))
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(r.stderr, "")
         return json.loads(r.stdout)["hookSpecificOutput"] if r.stdout.strip() else None
@@ -485,7 +484,7 @@ class GateTest(unittest.TestCase):
         self.assertIsNone(self.gate("job.py show"))
 
     def raw(self, payload):
-        r = subprocess.run([sys.executable, REVIEW_GATE], input=json.dumps(payload), capture_output=True, text=True)
+        r = hook(REVIEW_GATE, json.dumps(payload))
         self.assertEqual(r.returncode, 0, r.stderr)
         return json.loads(r.stdout) if r.stdout.strip() else {}
 
@@ -522,7 +521,7 @@ class GateTest(unittest.TestCase):
         env = dict(os.environ, FADE_MISTAKES=os.path.join(blocker, "mistakes.jsonl"))  # 파일 아래에는 쓸 수 없다
         payload = {"hook_event_name": "PreToolUse", "tool_name": "Bash", "cwd": self.cwd, "transcript_path": self.t.path,
                    "tool_input": {"command": "job.py review 0 \"x\""}}
-        r = subprocess.run([sys.executable, REVIEW_GATE], input=json.dumps(payload), capture_output=True, text=True, env=env)
+        r = hook(REVIEW_GATE, json.dumps(payload), env=env, crash=True)
         out = json.loads(r.stdout)  # JSON 이 둘이면 여기서 깨진다
         self.assertEqual(out["hookSpecificOutput"]["permissionDecision"], "deny")
 

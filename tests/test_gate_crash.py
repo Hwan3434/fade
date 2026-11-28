@@ -7,7 +7,7 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "hooks"))
 
-from helpers import GATE, PERMISSION, commit_and_switch, commit_file, git_repo, job
+from helpers import GATE, PERMISSION, commit_and_switch, commit_file, git_repo, hook, job
 from test_gaps import Repo, job_dir
 
 
@@ -134,7 +134,7 @@ class RedirectNumberTest(Repo):
         for command in ("gh pr merge 3 >/dev/null 2>&1", "gh pr merge 3 > log", 'gh pr merge "3">/dev/null', "gh pr merge '3'>log"):
             payload = {"hook_event_name": "PreToolUse", "tool_name": "Bash", "cwd": self.main,
                        "tool_input": {"command": command}}
-            r = subprocess.run([sys.executable, GATE], input=json.dumps(payload), capture_output=True, text=True, env=env)
+            r = hook(GATE, json.dumps(payload), env=env)
             # 메인 체크아웃에는 기록이 없어 PR 3 의 브랜치(feat/x)로 찾아야 막힌다
             self.assertTrue(r.stdout.strip(), command)
             self.assertEqual(json.loads(r.stdout)["hookSpecificOutput"]["permissionDecision"], "deny", command)
@@ -176,7 +176,7 @@ class WriteNewFolderTest(Repo):
     def test_아직_없는_폴더에_Write_해도_그_워크트리의_기록을_찾는다(self):
         payload = {"hook_event_name": "PermissionRequest", "tool_name": "Write", "cwd": self.main,
                    "tool_input": {"file_path": os.path.join(self.wt, "새", "폴더", "a.py"), "content": "x"}}
-        r = subprocess.run([sys.executable, PERMISSION], input=json.dumps(payload), capture_output=True, text=True)
+        r = hook(PERMISSION, json.dumps(payload))
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(json.loads(r.stdout)["hookSpecificOutput"]["decision"]["behavior"], "deny")
 
