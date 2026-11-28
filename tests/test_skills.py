@@ -308,10 +308,42 @@ class DispatchConditionsTest(unittest.TestCase):
                      "스스로 깨어날 수 없으면", "한 대화를 두 곳에서", "도는 중인 워커에 기준을 더하는 메시지를 보내지 않는다"):
             self.assertIn(word, body, word)
 
+    def test_조건을_못_채우는_방법을_대신_권하지_않는다(self):
+        # 조건을 채울 방법이 없는 환경에서 리드가 「넘겨받는다」를 못 채우는 방법을 권하고 질문으로 끝냈다(PR 32 써 보기)
+        self.assertIn("조건을 못 채우는 방법을 대신 권하지 않는다", section(self.text, "2. 워커 띄우기"))
+
     def test_정리는_환경이_주는_방법으로_닫고_워크트리까지_지우는지_먼저_본다(self):
         cleanup = section(self.text, "정리")
         self.assertIn("환경이 주는 방법", cleanup)
         self.assertIn("워크트리까지 지우는지", cleanup)
+
+
+class EnvironmentWordsTest(unittest.TestCase):
+    """job 의 글은 dispatch 와 같은 원칙으로 특정 앱을 이름으로 부르지 않는다. 원격이 없는 레포의 갈래는 dispatch 와 job 이 같다."""
+
+    def test_job_의_PR_단계와_SKILL_에_특정_앱의_이름이_없다(self):
+        for name in ("skills/job/SKILL.md", "skills/job/stages/pr.md"):
+            for word in ("데스크톱 앱", "CLI 든", "앱이 답을", "(데스크톱"):
+                self.assertNotIn(word, read(name), (name, word))
+
+    def test_원격이_없는_레포는_워크트리에서_하고_PR_없이_base_에_반영한다(self):
+        dispatch, pr = read("skills/dispatch/SKILL.md"), read("skills/job/stages/pr.md")
+        self.assertNotIn("GitHub 원격이 없는 폴더면 그 폴더에서", dispatch)
+        self.assertIn("git 레포가 아닌 폴더", dispatch)
+        self.assertIn("원격이 없", pr)
+
+    def test_tester_는_띄운_세션에_써_볼_레포를_알린다(self):
+        self.assertIn("FADE_TRY_REPO=", read("agents/tester.md"))
+
+    def test_README_는_지원하는_운영체제를_적는다(self):
+        for name in ("README.md", "README.en.md", "README.ja.md", "README.zh.md"):
+            self.assertIn("Windows", read(name), name)
+
+    def test_README_의_dispatch_줄에_지운_같은_폴더_워커_문장이_없다(self):
+        for name in ("README.md", "README.en.md", "README.ja.md", "README.zh.md"):
+            line = next(l for l in read(name).splitlines() if l.startswith("- `dispatch`"))
+            for word in ("리드와 같은 폴더", "직접 만든다", "same folder as the lead", "リードと同じフォルダ", "与主控相同的文件夹"):
+                self.assertNotIn(word, line, (name, word))
 
 
 class RepoWayTest(unittest.TestCase):
@@ -329,7 +361,15 @@ class RepoWayTest(unittest.TestCase):
         unattended = section(self.text, "사용자 없음일 때")
         self.assertIn("레포의 승인 규칙", unattended)
         self.assertIn("레포가 이긴다", unattended)
-        self.assertIn("job.py stop", unattended)
+        # 승인 규칙으로 멈추는 것이 「멈추는 때는 아래뿐이다」의 목록 안에 있어야 두 줄이 어긋나지 않는다
+        lines = unattended.splitlines()
+        start = next(i for i, l in enumerate(lines) if "멈추는 때는 아래뿐이다" in l)
+        cases = []
+        for line in lines[start + 1:]:
+            if not line.startswith("  - "):
+                break
+            cases.append(line)
+        self.assertTrue(any("승인 규칙" in c for c in cases), cases)
 
 
 if __name__ == "__main__":

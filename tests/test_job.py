@@ -5,7 +5,7 @@ import sys
 import tempfile
 import unittest
 
-from helpers import JOB, commit_and_switch, git_repo, job, mistakes
+from helpers import JOB, ROOT, commit_and_switch, git_repo, job, mistakes
 
 
 class JobTest(unittest.TestCase):
@@ -38,6 +38,129 @@ class JobTest(unittest.TestCase):
     def commit(self):
         subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-q",
                         "--allow-empty", "-m", "수정"], cwd=self.cwd, check=True)
+
+    def test_오래_도는_명령_동안_다른_job_py_가_남긴_기록을_덮어쓰지_않는다(self):
+        # log 와 red 는 명령을 돌린 뒤 저장한다. 그 사이 다른 job.py 가 남긴 증거가 사라지면 안 된다(PR 31 에서 두 번 사라짐)
+        self.start()
+        inner = '"%s" "%s" evidence "%s" "%s"' % (sys.executable, JOB, "도는 동안 남긴 증거", self.shot())
+        self.assertEqual(job(self.cwd, "log", "기준", inner).returncode, 0)
+        self.assertEqual(job(self.cwd, "red", inner.replace("도는 동안", "red 가 도는 동안") + " && false").returncode, 0)
+        criteria = [l.split(" (")[0] for l in job(self.cwd, "show").stdout.splitlines() if l.startswith("  - ")]
+        self.assertEqual(sorted(criteria), sorted(["  - 기준", "  - 도는 동안 남긴 증거", "  - red 가 도는 동안 남긴 증거"]))
+
+    def test_여럿을_함께_돌려도_기록이_사라지지_않는다(self):
+        # 다시 읽기, 고치기, 저장 사이를 잠근다. 잠그지 않으면 10개 가운데 1개만 남았다(.tmp 이름 충돌 포함)
+        self.start()
+        ps = [subprocess.Popen([sys.executable, JOB, "human", "볼 것 %d" % i], cwd=self.cwd, stdout=subprocess.PIPE,
+                               stderr=subprocess.PIPE, text=True) for i in range(10)]
+        ps += [subprocess.Popen([sys.executable, JOB, "log", "기준 %d" % i, "sleep 0.3"], cwd=self.cwd,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) for i in range(2)]
+        for p in ps:
+            out, err = p.communicate(timeout=60)
+            self.assertEqual(p.returncode, 0, err)
+        show = job(self.cwd, "show").stdout
+        self.assertEqual(sum(1 for l in show.splitlines() if l.startswith("- 사람이 볼 것 ")), 10)
+        self.assertIn("기준 0", show)
+        self.assertIn("기준 1", show)
+
+    def test_log_와_red_는_파이프로_종료_코드를_가리는_명령을_받지_않는다(self):
+        self.start()
+        for args in (("log", "기준", "true | tail -1"), ("log", "기준", "false |& cat"), ("red", "false | tail -1")):
+            r = job(self.cwd, *args)
+            self.assertNotEqual(r.returncode, 0, args)
+            self.assertIn("파이프", r.stderr)
+        self.assertEqual(job(self.cwd, "log", "기준", "false || true").returncode, 0)
+        self.assertEqual(job(self.cwd, "log", "기준", "echo 'a|b' \"c|d\" e\\|f").returncode, 0)
+
+    def test_log_와_red_는_파이프_검사를_명령_치환_안과_따옴표_안에서는_하지_않는다(self):
+        self.start()
+        for command in ('x=$(git log --oneline | head -1); test -n "$x"', 'grep -c "job.py human-done" README.md || true',
+                        "echo `echo a | tr a b`"):
+            r = job(self.cwd, "log", "기준", command)
+            self.assertNotIn("파이프", r.stderr, command)
+            self.assertNotIn("리드나 사람만", r.stderr, command)
+            self.assertIn("증거를 기록했다", r.stdout, command)
+        for command in ("x # $(\na | b", "a ;# $(\nb | c"):  # 주석 안의 $( 는 치환이 아니다
+            self.assertIn("파이프", job(self.cwd, "log", "기준", command).stderr, command)
+
+    def test_log_와_red_는_리드만_할_기록을_감싸_부르지_않는다(self):
+        self.start()
+        for args in (("log", "기준", "job.py human-done 1 x"), ("red", "python3 x/job.py contrasted y; false"),
+                     ("log", "기준", "job.py hardened z")):
+            r = job(self.cwd, *args)
+            self.assertNotEqual(r.returncode, 0, args)
+            self.assertIn("리드", r.stderr)
+
+    def test_log_와_red_는_레포_밖_임시_폴더의_스크립트를_받지_않는다(self):
+        # 레포 자신이 임시 폴더 아래면 받는다(테스트, 써 보기). 그래서 이 레포는 임시 폴더 밖에 만든다
+        common = subprocess.run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], cwd=ROOT,
+                                capture_output=True, text=True).stdout.strip()
+        repo = tempfile.TemporaryDirectory(dir=common)
+        self.addCleanup(repo.cleanup)
+        subprocess.run(["git", "init", "-q", repo.name], check=True)
+        commit_and_switch(repo.name, "feat/x")
+        self.assertEqual(job(repo.name, "start", "작업").returncode, 0)
+        script = tempfile.NamedTemporaryFile("w", suffix=".sh", delete=False)
+        script.write("exit 0\n")
+        script.close()
+        self.addCleanup(os.remove, script.name)
+        for command in ("sh " + script.name, "sh -e " + script.name, "timeout 60 sh " + script.name,
+                        "env FOO=1 sh " + script.name, "python3 -u " + script.name, script.name,
+                        "sudo -u root " + script.name, "python3 -W ignore " + script.name, "sh -o pipefail " + script.name,
+                        "timeout -s KILL 5 sh " + script.name, "env -u FOO " + script.name, "timeout 0.5 sh " + script.name):
+            r = job(repo.name, "log", "기준", command)
+            self.assertNotEqual(r.returncode, 0, command)
+            self.assertIn("임시 폴더", r.stderr, command)
+        # 명령 자리가 아닌 임시 폴더의 데이터 파일(비교할 기대값)은 받는다
+        self.assertNotIn("임시 폴더", job(repo.name, "log", "기준", "diff -u %s %s || true" % (script.name, script.name)).stderr)
+        self.assertEqual(job(self.cwd, "start", "작업").returncode, 0)
+        self.assertEqual(job(self.cwd, "log", "기준", "sh " + script.name).returncode, 0)  # 임시 폴더 아래 레포
+
+    def test_멈춘_작업은_사람이_확인한_뒤_resume_으로_푼다(self):
+        self.start()
+        self.assertEqual(job(self.cwd, "stop", "레포의 승인 규칙이 병합에 사람의 확인을 요구한다").returncode, 0)
+        self.assertIn("멈춤", job(self.cwd, "check").stdout)
+        self.assertNotEqual(job(self.cwd, "resume", " ").returncode, 0)
+        r = job(self.cwd, "resume", "사용자가 승인 규칙대로 확인했다")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("멈춤:", job(self.cwd, "check").stdout)
+        show = job(self.cwd, "show").stdout
+        self.assertIn("사용자가 승인 규칙대로 확인했다", show)
+        self.assertIn("레포의 승인 규칙이 병합에 사람의 확인을 요구한다", show)
+
+    def test_써_보기_레포의_하위_폴더는_되고_이름_앞부분만_같은_옆_폴더는_안_된다(self):
+        self.start()
+        os.makedirs(os.path.join(self.cwd, "sub"))
+        env = dict(os.environ, FADE_TRY_REPO=self.cwd)
+        self.assertEqual(subprocess.run([sys.executable, JOB, "show"], cwd=os.path.join(self.cwd, "sub"), env=env,
+                                        capture_output=True, text=True).returncode, 0)
+        # FADE_TRY_REPO 가 이 레포 경로의 앞부분일 뿐이면(/tmp/abc 와 /tmp/abcdef) 그 레포가 아니다
+        r = job(self.cwd, "show", env=dict(os.environ, FADE_TRY_REPO=os.path.realpath(self.cwd)[:-2]))
+        self.assertNotEqual(r.returncode, 0)
+        r = job(self.cwd, "mark", "1", "key", "k", env={k: v for k, v in env.items() if k != "FADE_MISTAKES"})
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("써 보기", r.stderr)
+
+    def test_green_이_도는_동안_red_가_바뀌면_받지_않는다(self):
+        self.start()
+        # red 의 명령이 돌면서 다른 red 를 남긴다. green 은 돌린 red 가 아닌 것으로 통과를 남기면 안 된다
+        inner = '"%s" "%s" red "test -f nope.txt"' % (sys.executable, JOB)
+        self.assertEqual(job(self.cwd, "red", inner + " ; test -f done.txt").returncode, 0)
+        open(os.path.join(self.cwd, "done.txt"), "w").close()
+        r = job(self.cwd, "green")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertNotIn("green 을 기록했다", r.stdout)
+
+    def test_써_보기_세션은_써_볼_레포_밖의_작업_기록을_건드리지_않는다(self):
+        self.start()
+        other = tempfile.TemporaryDirectory()
+        self.addCleanup(other.cleanup)
+        env = dict(os.environ, FADE_TRY_REPO=other.name)
+        for args in (("human", "x"), ("review-files", "main"), ("show",)):
+            r = job(self.cwd, *args, env=env)
+            self.assertNotEqual(r.returncode, 0, args)
+            self.assertIn("써 보기", r.stderr)
+        self.assertEqual(job(self.cwd, "show", env=dict(os.environ, FADE_TRY_REPO=self.cwd)).returncode, 0)
 
     def test_시작하지_않으면_다른_명령을_받지_않는다(self):
         r = job(self.cwd, "red", "false")

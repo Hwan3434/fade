@@ -10,6 +10,8 @@
 병합 조건의 green 과 리뷰는 지금 커밋에서 찍힌 것만 친다. 증거와 써 보기는 지금 커밋에서 찍혔거나,
 기대는 경로(--paths)를 적었고 찍은 커밋 뒤로 그 경로가 바뀌지 않았으면 친다. 낡은 것이 하나라도 남으면 막는다.
 실수 기록은 작업과 레포를 넘어 모이는 한 파일(~/.claude/fade/mistakes.jsonl, 환경 변수 FADE_MISTAKES 로 바꾼다)이다.
+써 보기로 띄운 세션에는 FADE_TRY_REPO 에 써 볼 레포를 준다. 그 세션의 job.py 는 그 레포 밖의 작업 기록을 건드리지 않고,
+FADE_MISTAKES 를 정하지 않았으면 기본 실수 기록에도 쓰지 않는다.
 stop 과 slip, 그리고 병합 훅과 승인 창 훅이 막을 때 한 줄씩 붙는다. 레포가 OS 임시 폴더 아래에 있으면(테스트, 써 보기)
 FADE_MISTAKES 를 정하지 않은 동안 쓰지 않는다. PR 을 기록하면 이 작업에서 붙인 줄의 빈 pr 칸을 채운다.
 
@@ -31,7 +33,9 @@ FADE_MISTAKES 를 정하지 않은 동안 쓰지 않는다. PR 을 기록하면 
                                          파일은 지워질 수 있어 받지 않는다(tried 도 같다). git 폴더 안 fade-try/ 에 둔다
   job.py log     <완료 기준> <명령> [--paths <경로>...]
                                          명령을 돌려 출력 전체를 파일로 남기고 증거로 붙인다. 출력은 종료 코드가 0 이 아닐 때만
-                                         끝 40줄을 찍는다. 전체는 로그 파일에 있다
+                                         끝 40줄을 찍는다. 전체는 로그 파일에 있다. log 와 red 는 파이프(|, |&)가 든 명령
+                                         (뒤 명령의 종료 코드가 남는다), 레포 밖 OS 임시 폴더의 스크립트, 리드만 할 기록
+                                         (human-done, contrasted, hardened, resume)을 부르는 명령을 받지 않는다
   job.py tried   <무엇을 어떻게> <파일>... [--paths <경로>...]
                                          직접 써 본 기록과 그 화면·출력 파일
                                          --paths 는 그 증거나 써 보기가 기대는 레포 안의 파일과 폴더다. 적으면 그 경로가
@@ -40,13 +44,19 @@ FADE_MISTAKES 를 정하지 않은 동안 쓰지 않는다. PR 을 기록하면 
   job.py drop    <완료 기준> | --tried    그 기준에 붙인 증거를, --tried 면 써 보기를 모두 지운다
   job.py try-na  <이유>                  써 볼 화면도 명령도 없는 작업일 때
   job.py human   <사람이 볼 것>           사람만 판정할 수 있는 것이 남았을 때. 직접 써 보기를 대신하고, 병합을 막는다
+  job.py human-done <번호> <누가 무엇을 근거로 풀었나> [<근거 파일>...]
+                                         사람(또는 사람이 맡긴 리드)이 확인한 뒤 그 사람이 볼 것을 푼다. 번호는 show 의 번호다.
+                                         사람 없는 작업을 돈 세션은 스스로 풀지 못한다(fade 훅 lead_gate 가 막는다)
+  job.py contrasted <대조 결과>          리드가 워커의 기록을 완료 기준과 대조한 결과. 리드가 워커의 워크트리에서 남긴다
+  job.py hardened <hardener 결과>        리드가 hardener 를 돌린 결과. 병합된 워커의 워크트리는 이 둘이 있어야 지운다
   job.py review-files <base>             버그 축이 볼 bug.patch(앞 리뷰가 없으면 base 와의 전체, 있으면 그 리뷰의
                                          커밋 뒤)를 쓰고, 명세 리뷰어를 띄울지 판단할 재료를 알린다. 첫 줄은 base 와의 diff 의 파일 수와 줄 수
                                          (더한 줄 + 뺀 줄), 셋째 줄부터는 파일마다 더한 줄, 뺀 줄, 경로다. 명세 리뷰어에게 줄 show
                                          출력과 diff 를 워크트리 안 .fade-review/ (git 이 무시하는 폴더)에 쓴다. 명세 리뷰어가 본
                                          커밋이 있으면 그 뒤에 고친 부분만, 없으면 base 와의 전체를 쓴다(둘째 줄이 어느 쪽인지 알린다).
                                          계획서 원문은 부르는 쪽이 plan.md 로 쓴다. 레포가 .gitattributes 에 linguist-generated,
-                                         -diff, binary 로 표시한 파일은 두 diff 에서 빼고 이름과 줄 수를 알린다. bug.patch 가
+                                         -diff, binary 로 표시한 파일은 두 diff 에서 빼고 이름과 줄 수를 알린다. 표시는
+                                         base 의 .gitattributes 에서만 읽는다(이 브랜치가 더한 표시는 병합 뒤부터 듣는다). bug.patch 가
                                          20000자를 넘으면 파일 경계에서 나눈 조각을 .fade-review/parts/ 에도 쓴다
   job.py review  <남은 막는 지적 수> [<요약>] [--spec | --minor] [--dropped=<수>]
                                          코드 리뷰 결과. 지금 커밋에서 남은 막는 지적이 0 이어야 병합한다.
@@ -64,6 +74,9 @@ FADE_MISTAKES 를 정하지 않은 동안 쓰지 않는다. PR 을 기록하면 
                                          보고에는 첫 줄인 기록 주소 다음에 번호째 다시 적는다
   job.py answered <번호> <답>            사용자에게 받은 답을 적는다
   job.py stop    <이유>                  해결하지 못했거나 사용자 결정이 필요해 멈춘다. 병합을 막고 실수 기록에 남긴다
+  job.py resume  <누가 무엇을 근거로 풀었나>
+                                         사람(또는 사람이 맡긴 리드)이 멈춘 이유를 확인한 뒤 멈춤을 푼다. 멈춘 이유와 푼 근거가
+                                         기록에 남는다. 사람 없는 작업이나 dispatch 워커를 돈 세션은 스스로 풀지 못한다(fade 훅 lead_gate 가 막는다)
   job.py slip    review|ci|try|user <key> <무엇을 잘못했나>
                                          리뷰에서 고친 막는 지적, CI 실패, 써 보기(tester)가 찾은 버그, 사용자 지적을 실수 기록에
                                          남긴다. key 는 같은 실수끼리 묶는 이름(영문 소문자, 숫자, -)이다. 같은 실수의 key 가
@@ -79,11 +92,14 @@ FADE_MISTAKES 를 정하지 않은 동안 쓰지 않는다. PR 을 기록하면 
                                          파일(워크트리가 지워져도 남는다)에 쓰고 그 절대 경로만 찍는다. PR 이 없거나 기록 댓글이
                                          실패한 작업의 보고가 가리킨다
 """
+import codecs
 import contextlib
+import datetime
 import fcntl
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -124,12 +140,39 @@ def load(cwd):
 
 
 def save(cwd, state):
-    # 데스크톱 앱이 만든 워크트리에서 시작한 뒤 레포 규칙대로 브랜치를 새로 따는 일이 있어, 기록할 때마다 지금 브랜치로 맞춘다
-    state["branch"] = branch(cwd)
+    # 워크트리를 만든 뒤 레포 규칙대로 브랜치를 새로 따거나 이름을 바꾸는 일이 있어, 기록할 때마다 지금 브랜치로 맞춘다.
+    # 앞 이름은 branches 에 남겨, 바꾸기 전에 찍힌 실수 기록의 줄도 이 작업의 줄로 본다
+    now, old = branch(cwd), state.get("branch")
+    # base 에서 시작해 브랜치를 딴 경우 base 이름은 남기지 않는다. base 의 다른 작업 줄까지 이 작업으로 보게 된다
+    if old and old != now and old not in base_names(cwd) and old not in state.setdefault("branches", []):
+        state["branches"].append(old)
+    state["branch"] = now
     p = state_path(cwd)
-    with open(p + ".tmp", "w", encoding="utf-8") as f:
+    tmp = "%s.%d.tmp" % (p, os.getpid())  # 다른 job.py 와 이름이 겹치지 않게
+    with open(tmp, "w", encoding="utf-8") as f:
         json.dump(state, f, ensure_ascii=False, indent=2)
-    os.replace(p + ".tmp", p)
+    os.replace(tmp, p)
+
+
+LOCK = []  # 잡은 기록 잠금 파일. 다시 읽기, 고치기, 저장 사이에 다른 job.py 가 끼지 못하게 한다
+
+
+def hold(cwd):
+    """기록 잠금을 잡는다. 명령을 돌리는 동안(run)은 놓아, 오래 도는 테스트가 다른 기록 명령을 세우지 않게 한다."""
+    f = open(state_path(cwd) + ".lock", "a")
+    fcntl.flock(f, fcntl.LOCK_EX)
+    LOCK.append(f)
+
+
+def release():
+    while LOCK:
+        LOCK.pop().close()
+
+
+def base_names(cwd):
+    """base 로 칠 브랜치 이름: main, master, origin 의 기본 브랜치(병합 훅과 같다)."""
+    r = subprocess.run(["git", "symbolic-ref", "--short", "refs/remotes/origin/HEAD"], cwd=cwd, capture_output=True, text=True)
+    return {"main", "master"} | ({r.stdout.strip()[len("origin/"):]} if r.stdout.startswith("origin/") else set())
 
 
 def branch(cwd):
@@ -153,9 +196,117 @@ def dirty(cwd):
 
 
 def run(cwd, command):
+    """명령을 돌린다. 도는 동안은 기록 잠금을 놓고, 끝나면 다시 잡는다. 부르는 쪽은 그 뒤 기록을 다시 읽는다."""
+    held = bool(LOCK)
+    release()
     # stderr 를 stdout 에 합쳐 터미널에 찍힌 순서를 지킨다. 실패한 log 는 그 끝만 보이니 원인이 순서째 끝에 있어야 한다
     r = subprocess.run(command, shell=True, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    if held:
+        hold(cwd)
     return r.returncode, r.stdout
+
+
+LEAD_COMMANDS = ("human-done", "contrasted", "hardened", "resume")
+LEAD_WORDS = re.compile(r"job\.py\W+(human-done|contrasted|hardened|resume)\b")  # 해석하지 못한 명령에 쓴다
+
+
+def unquoted_pipe(command):
+    """명령 줄 맨 위의 파이프(| 와 |&). || 와, 따옴표 안·명령 치환($(...), 백틱) 안의 파이프는 아니다. 명령 치환 안의
+    파이프는 그 값만 정하고 명령 줄의 종료 코드를 가리지 않는다."""
+    quote, depth, tick, i, n = None, 0, False, 0, len(command)
+    while i < n:
+        c = command[i]
+        if c == "\\" and quote != "'":
+            i += 2
+            continue
+        if quote is None and c == "#" and (i == 0 or command[i - 1].isspace() or command[i - 1] in ";&|("):  # 주석
+            j = command.find("\n", i)
+            i = n if j < 0 else j
+            continue
+        if c in "'\"" and quote in (None, c):
+            quote = None if quote else c
+        elif quote != "'" and command.startswith("$(", i):
+            depth += 1
+            i += 2
+            continue
+        elif quote != "'" and c == ")" and depth:
+            depth -= 1
+        elif quote != "'" and c == "`":
+            tick = not tick
+        elif quote is None and not depth and not tick and c == "|":
+            if command.startswith("||", i):
+                i += 2
+                continue
+            return True
+        i += 1
+    return False
+
+
+OPERATORS = {";", "&", "&&", "|", "||", "|&", "(", ")", "\n"}
+INTERPRETERS = re.compile(r"^(sh|bash|zsh|dash|python\S*|node|ruby|perl|source|\.)$")
+# 명령을 감싸는 명령: 그 옵션(과 timeout 의 시간, nice 의 값)을 건너뛴 다음 낱말이 명령 자리다
+WRAPPING = re.compile(r"^(timeout|env|nice|nohup|sudo|time|command|exec|stdbuf|ionice|xargs)$")
+# 감싸는 명령과 해석기의 옵션 가운데 값을 따로 받는 것. 그 값은 명령 낱말이 아니다
+VALUE_OPTIONS = {"sudo": {"-u", "-g", "-p", "-C", "-D", "-h", "-R", "-T", "-U", "-r", "-t"}, "env": {"-u", "-C", "-S"},
+                 "nice": {"-n"}, "timeout": {"-s", "-k"}, "time": {"-f", "-o"}, "stdbuf": {"-i", "-o", "-e"},
+                 "ionice": {"-c", "-n", "-p"}, "xargs": {"-n", "-I", "-L", "-P", "-d", "-s", "-E"}, "exec": {"-a"},
+                 "sh": {"-o", "-O"}, "bash": {"-o", "-O"}, "zsh": {"-o"}, "dash": {"-o"}, "python": {"-W", "-X"}}
+
+
+def command_words(command):
+    """명령 자리에 오는 낱말들: 줄 첫머리와 ; && || | ( 뒤의 첫 낱말, 그리고 sh·python 같은 해석기 뒤의 첫 낱말.
+    환경 변수 지정은 건너뛴다. 해석하지 못하면 None."""
+    try:
+        lex = shlex.shlex(command, posix=True, punctuation_chars=";&|()\n")
+        lex.whitespace = " \t\r"
+        lex.whitespace_split = True
+        tokens = list(lex)
+    except ValueError:
+        return None
+    words, at_command, wrapped, owner, skip = [], True, False, "", False
+    for tok in tokens:
+        if tok in OPERATORS or set(tok) <= set(";&|()\n"):
+            at_command, wrapped, owner, skip = True, False, "", False
+            continue
+        if not at_command:
+            continue
+        if skip:
+            skip = False  # 앞 옵션의 값(sudo -u root 의 root)
+            continue
+        if "=" in tok and not tok.startswith("-"):
+            continue  # 환경 변수 지정
+        if tok.startswith("-"):
+            skip = tok in VALUE_OPTIONS.get(owner, ())
+            continue  # 해석기나 감싸는 명령의 옵션
+        if wrapped and re.fullmatch(r"-?\d+(\.\d+)?[smhd]?", tok):
+            continue  # timeout 의 시간, nice 의 값
+        words.append(tok)
+        name = os.path.basename(tok)
+        wrapped = bool(WRAPPING.match(name))
+        at_command = wrapped or bool(INTERPRETERS.match(name))
+        owner = "python" if name.startswith("python") else name
+    return words, tokens
+
+
+def refused(cwd, command):
+    """log 와 red 가 받지 않는 명령이면 그 이유."""
+    if unquoted_pipe(command):
+        return ("파이프(| 나 |&)가 든 명령은 마지막 명령의 종료 코드만 남아 앞 명령의 실패를 가린다. 파이프 없이 명령을 "
+                "그대로 준다(출력 전체는 로그 파일에 남는다)")
+    parsed = command_words(command)
+    tokens = parsed[1] if parsed else []
+    if (any(os.path.basename(t) == "job.py" and nxt in LEAD_COMMANDS for t, nxt in zip(tokens, tokens[1:]))
+            if parsed else LEAD_WORDS.search(command)):
+        return ("리드나 사람만 남길 기록(human-done, contrasted, hardened, resume)을 log·red 로 감싸 부르지 않는다. "
+                "사람이 확인한 뒤 사람이나 리드가 직접 부른다")
+    if not parsed or under_temp(top_dir(cwd)):
+        return None  # 레포 자신이 임시 폴더 아래면(테스트, 써 보기) 그 안의 스크립트를 부른다
+    for w in parsed[0]:
+        path = os.path.expanduser(w)
+        if os.path.isabs(path) and os.path.isfile(path) and under_temp(path):
+            return ("레포 밖 OS 임시 폴더의 스크립트(%s)는 지워질 수 있어 증거가 되지 못한다. 레포 안이나 git 폴더 안 "
+                    "fade-try/ 에 두고 부른다" % w)
+    return None
 
 
 def tail_of(text):
@@ -342,7 +493,7 @@ def mistake_rows():
     if not os.path.exists(path):
         return []
     with open(path, encoding="utf-8") as f:
-        return [row for row in map(loads, f) if row]
+        return [row for row in map(loads, f) if isinstance(row, dict)]
 
 
 def loads(line):
@@ -373,12 +524,18 @@ def main_checkout(cwd):
     return os.path.dirname(common) if r.returncode == 0 and os.path.basename(common) == ".git" else common
 
 
+def skips_default(cwd):
+    """임시 폴더의 레포(테스트, 써 보기)나 써 보기 세션(FADE_TRY_REPO)에서 FADE_MISTAKES 를 정하지 않았으면 기본 실수
+    기록에 손대지 않는다. 붙이기(add_mistake)와 채우기(fill_pr)가 이것을 본다. mark 는 전역 기록을 고치는 명령이라
+    git 레포 안에서 부를 때만 임시 폴더를 본다."""
+    return not os.environ.get("FADE_MISTAKES") and bool(os.environ.get("FADE_TRY_REPO") or under_temp(main_checkout(cwd)))
+
+
 def add_mistake(cwd, state, source, what, key=""):
     """실수 기록에 한 줄을 붙인다. 파일과 폴더가 없으면 만든다. 쓴 파일의 경로를 돌려준다.
-    임시 폴더의 레포(테스트, 써 보기)에서 FADE_MISTAKES 를 정하지 않았으면 쓰지 않고 None 을 돌려준다.
-    훅도 이 함수로 쓰니 막는 자리가 여기 하나다."""
+    임시 폴더의 레포에서 FADE_MISTAKES 를 정하지 않았으면 쓰지 않고 None 을 돌려준다. 훅도 이 함수로 쓴다."""
     repo = main_checkout(cwd)
-    if not os.environ.get("FADE_MISTAKES") and under_temp(repo):
+    if skips_default(cwd):
         return None
     row = {"time": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "repo": repo, "branch": branch(cwd),
            "pr": state.get("pr") or "", "source": source, "what": what, "key": key, "handled": ""}
@@ -391,34 +548,46 @@ def add_mistake(cwd, state, source, what, key=""):
 def fill_pr(cwd, state):
     """리뷰 slip 과 승인 창 훅의 줄은 PR 을 열기 전에 찍혀 pr 칸이 빈다. 이 작업(같은 레포, 같은 브랜치,
     작업을 시작한 뒤)의 줄 가운데 pr 이 빈 것에 PR 을 채운다. 같은 브랜치 이름을 다시 쓴 예전 작업의 줄은 건드리지 않는다."""
-    path, repo, now, since = mistakes_path(), main_checkout(cwd), branch(cwd), int(state.get("started") or 0)
-    if not os.path.exists(path):
+    path, repo, since = mistakes_path(), main_checkout(cwd), int(state.get("started") or 0)
+    names = {branch(cwd), *state.get("branches", [])}
+    if skips_default(cwd) or not os.path.exists(path):
         return
     with mistakes_lock(path):
-        rewrite(path, lambda lines: fill_lines(lines, state["pr"], repo, now, since))
+        rewrite(path, lambda lines: fill_lines(lines, state["pr"], repo, names, since))
 
 
 def rewrite(path, change):
     """잠금을 잡은 채로 부른다. 줄 목록을 change 로 고쳐 바뀌었으면 통째로 바꿔 쓴다."""
     with open(path, encoding="utf-8") as f:
-        lines = f.read().splitlines()
+        # splitlines 는 U+2028 같은 글자에서도 끊는다. 기록의 줄은 줄바꿈으로만 나뉜다
+        lines = f.read().split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
     if change(lines):
         with open(path + ".tmp", "w", encoding="utf-8") as f:
             f.write("\n".join(lines) + "\n")
         os.replace(path + ".tmp", path)
 
 
-def fill_lines(lines, pr, repo, now, since):
+def seconds(stamp):
+    """실수 기록의 시각. 시간대 오프셋이 있으면 그것으로 읽는다(다른 시간대에서 찍힌 줄). 없으면 이 컴퓨터의 시간대다."""
+    try:
+        return datetime.datetime.strptime(stamp, "%Y-%m-%dT%H:%M:%S%z").timestamp()
+    except ValueError:
+        return time.mktime(time.strptime(stamp[:19], "%Y-%m-%dT%H:%M:%S"))
+
+
+def fill_lines(lines, pr, repo, names, since):
     changed = False
     for i, line in enumerate(lines):
         row = loads(line)
-        if not row:
+        if not isinstance(row, dict):
             continue
         try:
-            at_ = time.mktime(time.strptime(row["time"][:19], "%Y-%m-%dT%H:%M:%S"))
-        except (KeyError, ValueError):
+            at_ = seconds(row["time"])
+        except (KeyError, TypeError, ValueError):
             continue
-        if row.get("pr") or row.get("repo") != repo or row.get("branch") != now or at_ < since:
+        if row.get("pr") or row.get("repo") != repo or row.get("branch") not in names or at_ < since:
             continue
         row["pr"] = pr
         lines[i] = json.dumps(row, ensure_ascii=False)
@@ -429,6 +598,10 @@ def fill_lines(lines, pr, repo, now, since):
 def mark(args):
     if len(args) < 3 or args[1] not in ("key", "handled"):
         sys.exit("job.py mark <줄 번호> key|handled <값>")
+    # 고치는 것은 전역 기록이라, 임시 폴더 판정은 git 레포 안에서 부를 때만 한다(hardener 는 레포 밖에서도 부른다)
+    if not os.environ.get("FADE_MISTAKES") and (os.environ.get("FADE_TRY_REPO") or
+                                                (git_dir(os.getcwd()) and under_temp(main_checkout(os.getcwd())))):
+        sys.exit("써 보기 세션이나 임시 폴더의 레포에서는 FADE_MISTAKES 를 정하지 않으면 기본 실수 기록을 고치지 않는다")
     path = mistakes_path()
     if not os.path.exists(path):
         sys.exit("실수 기록에 없는 줄이다: %s (0줄)" % args[0])
@@ -438,7 +611,9 @@ def mark(args):
         if not args[0].isdigit() or not 1 <= int(args[0]) <= len(lines):
             sys.exit("실수 기록에 없는 줄이다: %s (%d줄)" % (args[0], len(lines)))
         n = int(args[0]) - 1
-        row = json.loads(lines[n])
+        row = loads(lines[n])
+        if not isinstance(row, dict):
+            sys.exit("실수 기록 %d번 줄은 기록 한 줄(객체)로 읽히지 않는다: %s" % (n + 1, lines[n][:80]))
         row[args[1]] = args[2]
         lines[n] = json.dumps(row, ensure_ascii=False)
         done.append("%d: %s" % (n + 1, lines[n]))
@@ -500,8 +675,14 @@ def missing(state, cwd):
         out.append("리뷰: 마지막 커밋(%s)에서 커밋 전 변경 없이 다시 하지 않았다" % s)
     elif review["left"]:
         out.append("리뷰: 남은 막는 지적 %d개" % review["left"])
-    for h in state["human"]:
-        out.append("사람이 볼 것: " + h)
+    done = state.get("human_done") or {}
+    for n, h in enumerate(state["human"], 1):
+        d = done.get(str(n))
+        if not d:
+            out.append("사람이 볼 것 %d: %s. 사람이 확인한 뒤 job.py human-done %d \"<누가 무엇을 근거로>\" 로 푼다" % (n, h, n))
+        elif not holds(cwd, d, now):  # 사람이 본 뒤 코드가 바뀌었다
+            out.append("사람이 볼 것 %d: %s. 푼 커밋(%s) 뒤로 바뀌어 낡았다. 마지막 커밋(%s)에서 다시 확인하고 푼다"
+                       % (n, h, at(d), s))
     return out
 
 
@@ -548,6 +729,8 @@ def show(state, cwd, full=False):
             lines.append("- 물은 것: %d. %s → %s" % (q["id"], q["question"], q["answer"]))
     if state.get("unattended"):
         lines.append("- 사람 없음: 승인 창이 뜨면 기다리지 않고 거부된다")
+    for r in state.get("resumed", []):
+        lines.append("- 멈췄다 풀림(커밋 %s): %s → %s" % (at(r), r["stop"], r["by"]))
     if state.get("stopped"):
         lines.append("- 멈춤: " + state["stopped"])
     if state["no_test"]:
@@ -576,14 +759,19 @@ def show(state, cwd, full=False):
             lines += file_lines(t["files"]) if full else []
     if state["try_na"]:
         lines.append("- 직접 써 보기: 해당 없음 — " + state["try_na"])
-    for h in state["human"]:
-        lines.append("- 사람이 볼 것: " + h)
+    done = state.get("human_done") or {}
+    for n, h in enumerate(state["human"], 1):
+        d = done.get(str(n))
+        state_ = "" if not d else (" → 풀림(커밋 %s): %s%s" % (at(d), d["by"], "" if holds(cwd, d, head(cwd)) else
+                                                             ". 그 뒤 커밋이 바뀌어 낡았다"))
+        lines.append("- 사람이 볼 것 %d: %s%s" % (n, h, state_))
+        lines += file_lines(d["files"]) if d and full else []
     door = state.get("door")
     if door:
         lines.append("- 되돌릴 수 있는가: %s — %s" % ("한쪽 문" if door["kind"] == "one-way" else "양쪽 문", door["why"]))
     skipped = (state.get("review_files") or {}).get("excluded")
     if skipped:
-        lines.append("- 리뷰에서 뺀 파일(레포의 .gitattributes 표시): " + ", ".join(excluded_text(skipped)))
+        lines.append("- 리뷰에서 뺀 파일(base 의 .gitattributes 표시): " + ", ".join(excluded_text(skipped)))
     review = state.get("review")
     if review:
         lines.append("- 리뷰(%s%s): 남은 막는 지적 %d개%s%s" % (
@@ -593,6 +781,9 @@ def show(state, cwd, full=False):
             " — " + review["note"] if review["note"] else ""))
     if state["pr"]:
         lines.append("- PR: " + state["pr"])
+    for key, label in (("contrasted", "리드의 대조"), ("hardened", "hardener")):
+        if state.get(key):
+            lines.append("- %s(커밋 %s): %s" % (label, at(state[key]), state[key]["note"]))
     if state["merged"]:
         lines.append("- 병합: " + state["merged"]["commit"] + (" · " + state["merged"]["ci"] if state["merged"]["ci"] else ""))
     return mask("\n".join(lines))
@@ -609,17 +800,22 @@ def changed(cwd, *revs):
 def patch_file(header):
     """`diff --git a/<옛 경로> b/<새 경로>` 머리의 새 경로. 리뷰 훅도 이것으로 bug.patch 의 줄이 든 파일을 가른다."""
     rest = header[len("diff --git "):]
+    if rest.endswith('"') and ' "b/' in rest:  # git 이 따옴표로 싼 경로(탭, 따옴표, 백슬래시가 든 이름)
+        quoted = rest[rest.rindex(' "b/') + 2:-1]
+        return codecs.escape_decode(quoted.encode("utf-8"))[0].decode("utf-8", "replace")[len("b/"):]
     return rest.split(" b/", 1)[1] if " b/" in rest else rest
 
 
-def unreviewed(cwd, names):
+def unreviewed(cwd, names, source):
     """레포가 .gitattributes 로 읽을 대상이 아니라고 표시한 파일: linguist-generated(GitHub 가 diff 에서 접는 생성 파일),
-    -diff 와 binary(git 이 글로 비교하지 않는 파일). 표시는 작업 트리의 .gitattributes 에서 읽는다.
-    fade 는 파일 이름이나 확장자 목록을 갖지 않는다. 표시가 없으면 빼지 않는다."""
+    -diff 와 binary(git 이 글로 비교하지 않는 파일). 표시는 source(base)의 .gitattributes 에서 읽는다.
+    fade 는 파일 이름이나 확장자 목록을 갖지 않는다. 표시가 없으면 빼지 않는다. 읽지 못하면 git 의 오류 글을 돌려준다."""
     if not names:
-        return []
-    r = subprocess.run(["git", "check-attr", "-z", "--stdin", "linguist-generated", "diff", "binary"], cwd=cwd,
-                       input="\0".join(sorted(names)) + "\0", capture_output=True, text=True)
+        return {}
+    r = subprocess.run(["git", "check-attr", "-z", "--source=" + source, "--stdin", "linguist-generated", "diff", "binary"],
+                       cwd=cwd, input="\0".join(sorted(names)) + "\0", capture_output=True, text=True)
+    if r.returncode != 0:
+        return r.stderr.strip() or "git check-attr 가 종료 코드 %d 로 끝났다" % r.returncode
     out, marked = r.stdout.split("\0"), {}
     for path, attr, value in zip(out[0::3], out[1::3], out[2::3]):
         mark = {("linguist-generated", "set"): "linguist-generated", ("linguist-generated", "true"): "linguist-generated",
@@ -636,16 +832,46 @@ def line_counts(cwd, revs, paths):
     센다. 이름 바꿈은 따지지 않아(--no-renames) 경로로 맞춘다."""
     if not paths:
         return {}
-    r = subprocess.run(["git", "diff", "-a", "--no-renames", *revs, "--"] + [":(top,literal)" + p for p in paths],
-                       cwd=cwd, capture_output=True, text=True, errors="replace")
+    # 경로를 인자로 넘기면 뺄 파일이 아주 많을 때 인자 한도를 넘는다. 전체를 만들고 그 파일만 센다
+    r = subprocess.run(["git", *DIFF_CONFIG, "diff", *DIFF_OPTIONS, "-a", *revs, "--"], cwd=cwd,
+                       capture_output=True, text=True, errors="replace")
+    if r.returncode != 0:
+        return {}  # 줄 수 없이 이름과 표시만 알린다
+    wanted = set(paths)
     counts, name = {}, None
-    for line in r.stdout.splitlines():
+    for line in r.stdout.split("\n"):
         if line.startswith("diff --git "):
             name = patch_file(line)
-            counts.setdefault(name, 0)
-        elif name and line[:1] in "+-" and not line.startswith(("+++ ", "--- ")):
+            name = name if name in wanted else None
+            if name:
+                counts.setdefault(name, 0)
+        elif name and line[:1] in ("+", "-") and not line.startswith(("+++ ", "--- ")):
             counts[name] += 1
     return counts
+
+
+# 리뷰용 diff 는 사용자의 git 설정에 흔들리지 않게 만든다. 이름 바꿈을 끄는 것은 경로로 거르기 때문이다(켜 두면 표시된
+# 폴더로 옮긴 파일의 지움이나 빼낸 파일의 새 내용이 새 경로 하나로 걸러져 빠진다)
+DIFF_CONFIG = ["-c", "core.quotePath=false", "-c", "diff.noprefix=false", "-c", "diff.mnemonicPrefix=false"]
+DIFF_OPTIONS = ["--no-renames", "--src-prefix=a/", "--dst-prefix=b/"]
+
+
+def review_diff(top, base, revs, skip):
+    """리뷰용 diff. git 도 base 의 .gitattributes 로 만든다(브랜치가 더한 -diff, binary 로 내용을 숨기지 못하게).
+    뺄 파일은 만든 뒤 걸러 낸다. 경로를 인자로 넘기면 아주 많을 때 인자 한도를 넘는다. (diff, 알림)."""
+    note = ""
+    cmd = ["git", *DIFF_CONFIG, "--attr-source=" + base, "diff", *DIFF_OPTIONS, *revs, "--"]
+    r = subprocess.run(cmd, cwd=top, capture_output=True, text=True, errors="replace")
+    if r.returncode != 0 and "attr-source" in r.stderr:
+        note = ("이 git 은 --attr-source 를 몰라(git 2.42 전) diff 를 작업 트리의 .gitattributes 로 만들었다. 이 브랜치가 "
+                ".gitattributes 에 더한 -diff·binary 표시로 그 파일의 내용이 bug.patch 에서 숨겨질 수 있다")
+        cmd.remove("--attr-source=" + base)
+        r = subprocess.run(cmd, cwd=top, capture_output=True, text=True, errors="replace")
+    if r.returncode != 0:
+        sys.exit("리뷰용 diff 를 만들지 못했다: " + r.stderr.strip())
+    chunks = re.split(r"(?m)^(?=diff --git )", r.stdout)
+    return "".join(c for c in chunks if not (c.startswith("diff --git ") and
+                                              patch_file(c.split("\n", 1)[0]) in skip)), note
 
 
 def split_patch(text):
@@ -664,7 +890,11 @@ def review_files(cwd, state, base):
     쓰는 것을 막는다. 그래서 워크트리 안에 두되, 안의 .gitignore 가 폴더째 git 에서 빼게 한다.
     명세 리뷰어를 띄울지는 정하지 않는다. 부르는 쪽이 판단하도록 크기와 바뀐 파일만 알린다."""
     top = top_dir(cwd)
-    stat = subprocess.run(["git", "diff", "--numstat", base + "...HEAD"], cwd=top, capture_output=True, text=True)
+    # 줄 수도 base 의 표시로 센다(이 브랜치가 더한 -diff 로 줄 수에서 빠지지 않게). 옛 git 이면 작업 트리의 표시로 센다
+    numstat = ["git", "-c", "core.quotePath=false", "--attr-source=" + base, "diff", "--numstat", base + "...HEAD", "--"]
+    stat = subprocess.run(numstat, cwd=top, capture_output=True, text=True)
+    if stat.returncode != 0 and "attr-source" in stat.stderr:
+        stat = subprocess.run(numstat[:3] + numstat[4:], cwd=top, capture_output=True, text=True)
     if stat.returncode != 0:
         sys.exit("base 와의 diff 를 만들지 못했다: " + stat.stderr.strip())
     rows = [row.split("\t", 2) for row in stat.stdout.splitlines()]
@@ -675,15 +905,20 @@ def review_files(cwd, state, base):
     since = review.get("spec_head")
     since = since if since and is_ancestor(cwd, since, now) else None
     spec_range = [since, "HEAD"] if since else [base + "...HEAD"]
-    # 버그 축은 앞 리뷰(받은 것)가 본 커밋 뒤를, 앞 리뷰가 없거나 그 커밋이 사라졌으면 base 와의 전체를 본다
-    last = review.get("head")
+    # 버그 축은 앞 리뷰(받은 것)가 본 커밋 뒤를, 앞 리뷰가 없거나 그 커밋이 사라졌으면 base 와의 전체를 본다.
+    # 앞 리뷰와 같은 커밋이면(리뷰를 다시 남기는 경우) 앞 리뷰의 bug.patch 와 같은 범위다
+    last = review.get("bug_from") if review.get("head") == now else review.get("head")
     last = last if last and is_ancestor(cwd, last, now) else None
     bug_range = [last, "HEAD"] if last else [base + "...HEAD"]
     bug_names = changed(top, *bug_range)
-    skip = unreviewed(top, changed(top, base + "...HEAD") | changed(top, *spec_range) | bug_names)
-    keep = ["--", ":/"] + [":(top,literal,exclude)" + p for p in skip]
-    r = subprocess.run(["git", "diff", *spec_range, *keep], cwd=top, capture_output=True, text=True)
-    bug = subprocess.run(["git", "diff", *bug_range, *keep], cwd=top, capture_output=True, text=True).stdout
+    # 표시는 base 의 .gitattributes 에서만 읽는다. 브랜치가 스스로 표시를 더해 자기 파일을 리뷰에서 빼지 못하게 한다.
+    # 이 브랜치가 더한 표시는 병합된 뒤의 작업부터 듣는다. base 의 표시를 읽지 못하면(옛 git) 아무것도 빼지 않는다
+    whole = changed(top, base + "...HEAD")
+    skip = unreviewed(top, whole | changed(top, *spec_range) | bug_names, base)
+    unread_marks = skip if isinstance(skip, str) else ""
+    skip = {} if unread_marks else skip
+    spec_diff, old_git = review_diff(top, base, spec_range, skip)
+    bug, _ = review_diff(top, base, bug_range, skip)
     folder = os.path.join(top, ".fade-review")
     os.makedirs(folder, exist_ok=True)
     shutil.rmtree(os.path.join(folder, "parts"), ignore_errors=True)
@@ -694,8 +929,8 @@ def review_files(cwd, state, base):
             path = os.path.join(".fade-review", "parts", "%02d.patch" % i)
             with open(os.path.join(top, path), "w", encoding="utf-8") as f:
                 f.write(text)
-            parts.append({"path": path, "lines": len(text.splitlines()),
-                          "files": [patch_file(l) for l in text.splitlines() if l.startswith("diff --git ")]})
+            parts.append({"path": path, "lines": text.count("\n"),
+                          "files": [patch_file(l) for l in text.split("\n") if l.startswith("diff --git ")]})
     texts = [p for p in skip if "binary" not in skip[p]]  # binary 는 줄로 셀 수 없다
     counts = line_counts(top, [base + "...HEAD"], texts)
     counts = dict(line_counts(top, bug_range, [p for p in texts if p not in counts]), **counts)
@@ -703,18 +938,26 @@ def review_files(cwd, state, base):
     emptied = not bug.strip() and bool(bug_names & set(skip))
     # show.txt 가 이번에 뺀 파일을 보이도록 기록을 먼저 바꾼 뒤 쓴다
     state["review_files"] = {"head": now, "dirty": dirty(cwd), "excluded": excluded, "emptied": emptied, "parts": parts}
-    for name, text in ((".gitignore", "*\n"), ("show.txt", show(state, cwd) + "\n"), ("diff.patch", r.stdout),
+    for name, text in ((".gitignore", "*\n"), ("show.txt", show(state, cwd) + "\n"), ("diff.patch", spec_diff),
                        ("bug.patch", bug)):
         with open(os.path.join(folder, name), "w", encoding="utf-8") as f:
             f.write(text)
     print("base 와의 diff: 파일 %d개, 더한 줄 %d + 뺀 줄 %d = %d줄" % (len(rows), added, removed, added + removed))
     print("diff.patch: " + ("고친 부분만(명세 리뷰어가 본 %s 뒤의 diff)" % short(since) if since else "전체(base 와의 diff)"))
     print("\n".join(stat.stdout.splitlines()))
-    print("bug.patch: %d줄, %d자 (%s)" % (len(bug.splitlines()), len(bug),
+    print("bug.patch: %d줄, %d자 (%s)" % (bug.count("\n"), len(bug),
                                        "앞 리뷰가 본 %s 뒤" % short(last) if last else "base 와의 전체"))
     if skip:
-        print("리뷰에서 뺀 파일(레포의 .gitattributes 표시) %d개: %s"
+        print("리뷰에서 뺀 파일(base 의 .gitattributes 표시) %d개: %s"
               % (len(skip), ", ".join(excluded_text(excluded))))
+    if old_git:
+        print(old_git)
+    if unread_marks:
+        print("base(%s)의 .gitattributes 표시를 읽지 못해 아무 파일도 빼지 않았다(git check-attr --source 는 git 2.40 부터): %s"
+              % (base, unread_marks))
+    if any(os.path.basename(n) == ".gitattributes" for n in whole):
+        print("이 브랜치가 .gitattributes 를 바꿨다. 리뷰에서 뺄 파일은 base 의 표시로만 정하니, 이 브랜치에서 더한 표시는 "
+              "병합된 뒤의 작업부터 듣는다. 그 변경 자체는 bug.patch 에 든다")
     if emptied:
         print("bug.patch 가 비었다: 바뀐 파일이 모두 읽을 대상이 아니라고 표시돼 있다. 버그 축은 읽을 것이 없으니 "
               "code-review 를 부르지 않고 그 사실을 리뷰 요약에 적어 남긴다. 명세 리뷰어는 diff.patch 로 본다")
@@ -779,11 +1022,18 @@ def main(argv):
     if cmd not in COMMANDS:
         sys.exit(__doc__)
     args, options, paths = parse(cmd, argv[2:])
+    trial = os.environ.get("FADE_TRY_REPO")
+    if trial and cmd != "mark":  # 써 보기로 띄운 세션이 지시에 나온 진짜 워크트리로 cd 해 그 기록을 바꾼 일이 있다
+        here, root = (top_dir(cwd) if git_dir(cwd) else os.path.realpath(cwd)), os.path.realpath(trial)
+        if here != root and not here.startswith(root + os.sep):
+            sys.exit("써 보기 세션(FADE_TRY_REPO=%s)은 써 볼 레포 밖의 작업 기록을 건드리지 않는다: %s" % (trial, here))
     if cmd == "mark":
         mark(args)
         return
     if not git_dir(cwd):
         sys.exit("git 레포 안에서 돌린다")
+    if cmd not in ("show", "check"):
+        hold(cwd)  # 다시 읽기, 고치기, 저장 사이에 다른 job.py 가 끼지 못하게 한다(오래 도는 명령 동안은 run 이 놓는다)
     state = load(cwd)
     if cmd == "start":
         if state and not state["merged"] and state.get("branch") == branch(cwd):
@@ -802,6 +1052,7 @@ def main(argv):
     if state is None:
         sys.exit("작업 기록이 없다. job.py start 부터 한다")
     need = {"scope": 1, "red": 1, "no-test": 1, "evidence": 2, "log": 2, "tried": 1, "try-na": 1, "human": 1,
+            "human-done": 2, "contrasted": 1, "hardened": 1, "resume": 1,
             "review": 1, "review-files": 1, "door": 2, "ask": 1, "answered": 2, "stop": 1, "slip": 1, "pr": 1, "merged": 1}
     if len(args) < need.get(cmd, 0):
         sys.exit(usage(cmd))
@@ -824,7 +1075,10 @@ def main(argv):
     elif cmd == "red":
         if len(args) != 1:  # 따옴표 없이 친 명령의 뒷말이 말없이 버려지지 않게 한다
             sys.exit("테스트 명령은 따옴표로 묶어 하나로 준다: job.py red \"%s\"" % " ".join(args))
+        if refused(cwd, args[0]):
+            sys.exit(refused(cwd, args[0]))
         code, out = run(cwd, args[0])
+        state = load(cwd) or state  # 명령이 도는 동안 다른 job.py 가 남긴 기록을 덮어쓰지 않게 다시 읽는다
         if code == 0:
             sys.exit("테스트가 실패하지 않는다. 이번 변경을 판정하지 못하는 테스트다. 테스트를 고친다\n" + tail_of(out))
         if state["red"]:
@@ -839,7 +1093,12 @@ def main(argv):
     elif cmd == "green":
         if not state["red"]:
             sys.exit("red 가 없다. 구현 전에 실패하는 테스트부터 기록한다")
-        code, out = run(cwd, state["red"]["cmd"])
+        ran = state["red"]
+        code, out = run(cwd, ran["cmd"])
+        state = load(cwd) or state
+        if state["red"] != ran:
+            sys.exit("테스트가 도는 동안 다른 job.py 가 red 를 바꿨다. 돌린 것은 앞의 red(%s)다. green 을 다시 돌린다"
+                     % name_of(ran))
         if code != 0:
             sys.exit("테스트가 아직 통과하지 않는다 (종료 코드 %d)\n%s" % (code, tail_of(out)))
         impl = changed_since(cwd, state["red"])
@@ -869,8 +1128,11 @@ def main(argv):
             said = "지웠다: 「%s」의 증거 %d개" % (brief(args[0]), len(state["evidence"]) - len(kept))
             state["evidence"] = kept
     elif cmd == "log":
+        if refused(cwd, args[1]):
+            sys.exit(refused(cwd, args[1]))
         paths = repo_paths(cwd, paths)
         code, out = run(cwd, args[1])
+        state = load(cwd) or state
         need_clean(cwd, paths)  # 명령이 그 경로를 고쳤으면 지금 커밋의 내용으로 찍힌 증거가 아니다
         logs = os.path.join(git_dir(cwd), "fade-job-logs")
         os.makedirs(logs, exist_ok=True)
@@ -894,6 +1156,20 @@ def main(argv):
     elif cmd == "human":
         state["human"].append(args[0])
         said = "사람이 볼 것을 기록했다: %s. 남아 있으면 병합하지 않는다" % brief(args[0])
+    elif cmd == "human-done":
+        if not (args[0].isascii() and args[0].isdigit()) or not 1 <= int(args[0]) <= len(state["human"]):
+            sys.exit("기록에 없는 사람이 볼 것의 번호다: %s (%d개)" % (args[0], len(state["human"])))
+        if not args[1].strip():
+            sys.exit("누가 무엇을 근거로 풀었는지가 비었다\n" + usage("human-done"))
+        files = need_files(cwd, args[2:]) if args[2:] else []
+        n = int(args[0])  # 01 과 1 은 같은 항목이다
+        state.setdefault("human_done", {})[str(n)] = {"by": args[1], "files": files, "at": time.time(), **where(cwd)}
+        said = "사람이 볼 것 %d번을 풀었다: %s. 이 커밋에서만 유효하다(커밋이 바뀌면 다시 확인한다)" % (n, brief(args[1]))
+    elif cmd in ("contrasted", "hardened"):
+        if not args[0].strip():
+            sys.exit("결과가 비었다\n" + usage(cmd))
+        state[cmd] = {"note": args[0], "at": time.time(), **where(cwd)}
+        said = "%s 를 기록했다: %s" % ("리드의 대조" if cmd == "contrasted" else "hardener 결과", brief(args[0]))
     elif cmd == "review":
         if not args[0].isdigit():
             sys.exit("남은 막는 지적 수는 0 이상의 정수다")
@@ -928,8 +1204,15 @@ def main(argv):
                          "고친 막는 지적마다 slip review 로 남긴다. 오탐이나 계획서의 결정과 어긋나 수에서 뺐으면 "
                          "--dropped=<수> 로 적고 이유를 요약에 쓴다" % prev["left"])
         # spec_head 는 명세 리뷰어가 마지막으로 본 커밋이다. 다음 review-files 가 그 뒤의 diff 만 준다
+        # after 는 이 리뷰의 버그 축을 판정한 세션 기록의 시작이다. 같은 커밋에서 다시 남기면 앞 리뷰의 것을 물려받아,
+        # 리뷰 훅이 앞 리뷰가 본 code-review 로 판정한다
+        # bug_from 은 이 리뷰의 bug.patch 가 시작한 커밋(없으면 base 와의 전체)이다. 같은 커밋에서 다시 만든 bug.patch 가
+        # 비지 않고 앞 리뷰가 본 것과 같게 한다
+        same = bool(prev) and prev.get("head") == now
+        after = prev.get("after", since) if same else since
+        bug_from = prev.get("bug_from") if same else prev.get("head")
         state["review"] = {"left": int(args[0]), "note": note, "spec_head": spec_head, "minor": minor, "spec": spec,
-                           "dropped": dropped, "at": time.time(), **where(cwd)}
+                           "dropped": dropped, "at": time.time(), "after": after, "bug_from": bug_from, **where(cwd)}
         said = "리뷰를 기록했다: 남은 막는 지적 %d개 (커밋 %s%s)" % (
             int(args[0]), at(state["review"]), ", 사소한 지적을 모아 고친 커밋의 버그 축" if minor else
             ", 명세 리뷰어도 봄" if spec else "")
@@ -957,6 +1240,14 @@ def main(argv):
         save(cwd, state)
         written = add_mistake(cwd, state, "stop", args[0])
         said = "멈춤을 기록했다: %s. 병합을 막고 %s" % (brief(args[0]), "실수 기록에 남겼다" if written else NOT_WRITTEN)
+    elif cmd == "resume":
+        if not state.get("stopped"):
+            sys.exit("멈춘 작업이 아니다")
+        if not args[0].strip():
+            sys.exit("누가 무엇을 근거로 풀었는지가 비었다\n" + usage("resume"))
+        state.setdefault("resumed", []).append({"stop": state["stopped"], "by": args[0], "at": time.time(), **where(cwd)})
+        said = "멈춤을 풀었다: %s (멈춘 이유: %s)" % (brief(args[0]), brief(state["stopped"]))
+        state["stopped"] = None
     elif cmd == "slip":
         keys = list(dict.fromkeys(r["key"] for r in reversed(mistake_rows()) if r.get("key")))
         if args[0] not in SOURCES or len(args) != 3 or not KEY.fullmatch(args[1]) or not args[2].strip():
@@ -969,10 +1260,17 @@ def main(argv):
         nth = sum(1 for r in mistake_rows() if r.get("key") == key) if written else 0
         said = "%s(%s, key %s%s): %s" % ("실수 기록에 남겼다" if written else NOT_WRITTEN, source, key,
                                        ", 이 key 의 %d번째" % nth if nth else "", brief(what))
+        if written and keys and key not in keys:  # 처음부터 key 를 주면 같은 실수에 새 이름을 지을 수 있다
+            said += ("\n새 key 다. 있는 key: %s. 그 가운데 같은 실수가 있으면 job.py mark <줄 번호> key <있는 key> 로 고친다"
+                     % ", ".join(keys[:30]))
     elif cmd == "pr":
         state["pr"] = args[0]
-        fill_pr(cwd, state)
+        save(cwd, state)  # PR 기록이 먼저다. 실수 기록 채우기가 실패해도 PR 은 남는다
         said = "PR 을 기록했다: " + args[0]
+        try:
+            fill_pr(cwd, state)
+        except Exception as e:
+            said += "\n실수 기록의 빈 pr 칸은 채우지 못했다(%s: %s). PR 기록에는 영향이 없다" % (type(e).__name__, e)
     elif cmd == "merged":
         state["merged"] = {"commit": args[0], "ci": args[1] if len(args) > 1 else ""}
         said = "병합을 기록했다: " + args[0] + (" · " + args[1] if len(args) > 1 else "")

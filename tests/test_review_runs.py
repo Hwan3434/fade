@@ -87,13 +87,54 @@ class GateTest(unittest.TestCase):
 
     def read_patch(self, path=None, shown=None, **extra):
         """Read 도구처럼 줄 번호를 붙인 결과를 남긴다. shown 은 실제로 돌려준 줄 범위다(토큰 한도로 잘리면 앞부분만 온다)."""
-        with open(self.patch, encoding="utf-8") as f:
-            lines = f.read().splitlines()
+        with open(self.patch, encoding="utf-8", newline="") as f:
+            lines = f.read().split("\n")[:-1]  # Read 처럼 \n 으로만 줄을 센다
         start = extra.get("offset", 1)
         end = min(len(lines), start - 1 + extra.get("limit", 2000))
         first, last = shown or (start, end)
         result = "\n".join("%6d\t%s" % (i, lines[i - 1]) for i in range(first, last + 1))
         self.t.tool("Read", dict({"file_path": self.patch}, **extra), result=result, path=path)
+
+    def test_끝_줄이_앞줄과_같아도_앞부분만_읽은_것은_받지_않는다(self):
+        # 줄을 집합으로 견주면 앞에서 본 같은 글자의 줄이 끝 줄을 덮는다. 같은 줄은 나온 횟수만큼 보여야 한다
+        commit_file(self.cwd, "a.py", "a = 2\n" + "pass  # 같은 줄\n" * 6, "반복")
+        self.assertEqual(job(self.cwd, "review-files", "main").returncode, 0)
+        with open(self.patch, encoding="utf-8") as f:
+            n = len(f.read().splitlines())
+        self.t.prompt(MARKER)
+        self.read_patch(shown=(1, n - 3))  # head 처럼 끝 세 줄을 빼고 읽었다
+        self.assertIn("a.py", self.denied())
+        self.read_patch()
+        self.assertIsNone(self.gate())
+
+    def test_접두어를_뗀_내용만_읽은_것은_diff_를_읽은_것이_아니다(self):
+        # 바뀐 파일을 cat 으로 읽으면 +, -, 공백 접두어가 없다. 접두어까지 견줘야 diff 를 읽었다고 친다
+        text = "\n".join(l[1:] if l[:1] in "+- " else l for l in self.patch_text().splitlines())
+        self.t.prompt(MARKER)
+        self.t.tool("Bash", {"command": "cat a.py"}, result=text)
+        self.denied()
+
+    def test_앞_리뷰_전에_읽은_것은_다음_리뷰의_증거가_아니다(self):
+        early = time.time()
+        self.t.prompt(MARKER)
+        time.sleep(0.01)
+        self.assertEqual(job(self.cwd, "review", "1", "막는 지적 하나").returncode, 0)  # 이 리뷰 뒤로 자른다
+        commit_file(self.cwd, "b.py", "b = 1\n", "고친 커밋")
+        self.assertEqual(job(self.cwd, "review-files", "main").returncode, 0)
+        # 앞 리뷰 전에 찍힌 출력에 새 bug.patch 의 줄이 다 들어 있어도 치지 않는다
+        self.t._write(self.t.path, {"type": "user", "timestamp": iso(early), "message": {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "x", "content": self.patch_text()}]}})
+        self.assertIn("code-review", self.denied())
+
+    def test_같은_커밋에서_리뷰를_다시_남기면_앞_리뷰가_본_것으로_받는다(self):
+        # --dropped 를 빠뜨려 같은 커밋에서 다시 적는 경우. 새 커밋이 없으니 앞 리뷰를 받은 그 읽기로 판정한다
+        self.t.prompt(MARKER)
+        self.read_patch()
+        self.assertIsNone(self.gate())
+        time.sleep(0.01)
+        self.assertEqual(job(self.cwd, "review", "1", "막는 지적 하나").returncode, 0)
+        time.sleep(0.01)
+        self.assertIsNone(self.gate("job.py review 0 \"오탐 하나\" --dropped=1"))
 
     def test_review_files_가_버그_축의_patch_를_쓴다(self):
         with open(self.patch, encoding="utf-8") as f:
@@ -127,7 +168,79 @@ class GateTest(unittest.TestCase):
         self.read_patch(offset=260, limit=259)
         self.assertIsNone(self.gate())
 
-    def test_읽기가_실패했으면_치지_않는다(self):
+    def test_같은_앞부분을_두_번_읽어도_끝_줄을_읽은_것이_아니다(self):
+        # 잘린 Read 를 다시 부르는 일은 흔하다. 끝 줄이 앞부분에 나온 줄과 같아도 그 자리를 읽어야 한다
+        commit_file(self.cwd, "a.py", "def f():\n    if x:\n        y()\n    }\n}\n" * 2, "닫는 줄")
+        self.assertEqual(job(self.cwd, "review-files", "main").returncode, 0)
+        with open(self.patch, encoding="utf-8") as f:
+            n = len(f.read().splitlines())
+        self.t.prompt(MARKER)
+        self.read_patch(shown=(1, n - 2))
+        self.read_patch(shown=(1, n - 2))
+        self.denied()
+        self.read_patch(offset=n - 1, limit=2)
+        self.assertIsNone(self.gate())
+
+    def test_여러_hunk_파일을_읽다_잘리면_잘린_출력이라고_말한다(self):
+        # 가장 흔한 실패(Read 가 앞부분만 돌려줌)에서 원인을 「범위가 다른 diff」로 거꾸로 말하지 않는다
+        base = "".join("line %d\n" % i for i in range(80))
+        subprocess.run(["git", "switch", "-q", "main"], cwd=self.cwd, check=True)
+        commit_file(self.cwd, "b.py", base, "긴 파일")
+        subprocess.run(["git", "switch", "-q", "feat/x"], cwd=self.cwd, check=True)
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid", "merge", "-q", "--no-edit",
+                        "main"], cwd=self.cwd, check=True)
+        commit_file(self.cwd, "b.py", base.replace("line 5\n", "LINE 5\n").replace("line 40\n", "LINE 40\n")
+                    .replace("line 75\n", "LINE 75\n"), "세 군데")
+        self.assertEqual(job(self.cwd, "review-files", "main").returncode, 0)
+        with open(self.patch, encoding="utf-8") as f:
+            n = len(f.read().splitlines())
+        self.t.prompt(MARKER)
+        self.read_patch(shown=(1, n - 6))
+        self.assertIn("잘린 출력", self.denied())
+
+    def test_줄_안의_폼피드나_유니코드_줄_구분_글자가_있어도_한_번에_다_읽으면_받는다(self):
+        # Read 는 \n 으로만 줄 번호를 센다. splitlines 로 나누면 \x0c, U+2028 에서 줄이 잘려 자리가 어긋났다
+        commit_file(self.cwd, "a.py", "a = 2\nx = '\x0c'\ny = '\u2028'\nz = '\u2029'\n" + "".join("v%d = %d\n" % (i, i) for i in range(8)),
+                    "특수 글자")
+        self.assertEqual(job(self.cwd, "review-files", "main").returncode, 0)
+        with open(self.patch, encoding="utf-8", newline="") as f:
+            lines = f.read().split("\n")[:-1]
+        self.t.prompt(MARKER)
+        self.t.tool("Read", {"file_path": self.patch},
+                    result="\n".join("%6d\t%s" % (i, l) for i, l in enumerate(lines, 1)))
+        self.assertIsNone(self.gate())
+
+    def test_번호_없는_두_출력으로_앞과_끝을_나눠_읽어도_받는다(self):
+        commit_file(self.cwd, "a.py", "def f():\n    if x:\n        y()\n    }\n}\n" * 2, "닫는 줄")
+        self.assertEqual(job(self.cwd, "review-files", "main").returncode, 0)
+        lines = self.patch_text().splitlines()
+        self.t.prompt(MARKER)
+        self.t.tool("Bash", {"command": "head -n %d bug.patch" % (len(lines) - 2)}, result="\n".join(lines[:-2]))
+        self.t.tool("Bash", {"command": "tail -n 2 bug.patch"}, result="\n".join(lines[-2:]))
+        self.assertIsNone(self.gate())
+
+    def test_오류로_끝난_code_review_호출은_부른_것이_아니다(self):
+        self.t.tool("Skill", {"skill": "code-review", "args": "medium x"}, result="Unknown skill: code-review", error=True)
+        self.assertIn("code-review 가 돈 흔적이 없다", self.denied())
+
+    def test_플러그인_이름이_붙은_code_review_도_부른_것이다(self):
+        self.t.tool("Skill", {"skill": "anthropic:code-review", "args": "medium x"})
+        out = self.raw({"hook_event_name": "PreToolUse", "tool_name": "Bash", "cwd": self.cwd,
+                        "transcript_path": self.t.path, "tool_input": {"command": "job.py review 0 \"x\""}})
+        self.assertIn("머리 글", out.get("systemMessage", ""))
+
+    def test_따옴표로_감싼_job_py_경로의_review_도_해석하지_못하면_알린다(self):
+        self.passed_with_note({"hook_event_name": "PreToolUse", "tool_name": "Bash", "cwd": self.cwd,
+                               "transcript_path": self.t.path, "tool_input": {
+                                   "command": 'python3 "${CLAUDE_SKILL_DIR}/job.py" review "x'}}, "판정하지 못했다")
+
+    def test_해석하지_못해도_job_py_review_를_부르지_않는_명령에는_조용하다(self):
+        for command in ('grep -rn "job.py review README.md', "echo 'job.py review-files 를 쓴다"):
+            payload = {"hook_event_name": "PreToolUse", "tool_name": "Bash", "cwd": self.cwd,
+                       "transcript_path": self.t.path, "tool_input": {"command": command}}
+            self.assertEqual(self.raw(payload), {}, command)
+
+    def test_오류로_끝나_내용이_없는_읽기는_읽은_것이_아니다(self):
         self.t.prompt(MARKER)
         self.t.tool("Read", {"file_path": self.patch}, result="error", error=True)
         self.denied()
@@ -339,13 +452,20 @@ class GateTest(unittest.TestCase):
         self.assertIn("bug.patch 가 비었다", r.stdout)
         self.assertIsNone(self.gate())
 
-    def test_같은_커밋에서_다시_만든_빈_bug_patch_는_code_review_없이_받지_않는다(self):
+    def test_같은_커밋에서_다시_만든_bug_patch_는_앞_리뷰가_본_범위라_비지_않는다(self):
+        # 비면 code-review 없이 받힐 수 있다. 앞 리뷰와 같은 범위로 다시 만들어, 앞 리뷰가 본 code-review 로 판정한다
+        before = self.patch_text()
         self.t.prompt(MARKER)
         self.read_patch()
         self.assertEqual(job(self.cwd, "review", "0", "버그 축만").returncode, 0)
         time.sleep(0.01)
         job(self.cwd, "review-files", "main")
-        self.assertEqual(self.patch_text(), "")
+        self.assertEqual(self.patch_text(), before)
+        self.assertIsNone(self.gate())
+
+    def test_같은_커밋의_다시_남기기도_앞_리뷰_뒤의_code_review_가_없으면_받지_않는다(self):
+        self.assertEqual(job(self.cwd, "review", "0", "버그 축만").returncode, 0)  # 훅 없이 남긴 리뷰
+        time.sleep(0.01)
         self.assertIn("code-review 가 돈 흔적이 없다", self.denied())
 
     def test_job_과_무관한_명령은_해석하지_못해도_조용하다(self):
@@ -467,6 +587,16 @@ class DropTest(unittest.TestCase):
         self.assertEqual(self.review("3", "새 지적이 하나 더").returncode, 0)
         self.assertEqual(self.review("3", "그대로").returncode, 0)
 
+    def test_앞_리뷰_전의_slip_과_red_는_고친_흔적이_아니다(self):
+        job(self.cwd, "slip", "review", "k", "앞 리뷰 전에 고침", env=self.env)
+        self.assertEqual(job(self.cwd, "red", "false").returncode, 0)
+        time.sleep(0.01)
+        self.assertEqual(self.review("2", "그대로").returncode, 0)
+        time.sleep(0.01)
+        r = self.review("0", "다 고쳤다")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("slip", r.stderr)
+
     def test_값을_받는_옵션만_이름_등호_값_꼴을_받는다(self):
         r = job(self.cwd, "review", "2", "x", "--spec=1")
         self.assertIn("모르는 옵션: --spec=1", r.stderr)
@@ -489,9 +619,16 @@ class ReviewFilesTest(unittest.TestCase):
         commit_and_switch(self.cwd, "feat/x")
         job(self.cwd, "start", "작업")
 
-    def files(self, attributes, **changes):
+    def files(self, attributes, branch_attributes=None, **changes):
+        """attributes 는 base(main)에 둔 표시, branch_attributes 는 이 브랜치가 더한 표시다."""
         if attributes is not None:
+            subprocess.run(["git", "switch", "-q", "main"], cwd=self.cwd, check=True)
             commit_file(self.cwd, ".gitattributes", attributes, "표시")
+            subprocess.run(["git", "switch", "-q", "feat/x"], cwd=self.cwd, check=True)
+            subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid", "merge", "-q", "--no-edit",
+                            "main"], cwd=self.cwd, check=True)
+        if branch_attributes is not None:
+            commit_file(self.cwd, ".gitattributes", branch_attributes, "브랜치의 표시")
         for name, text in changes.items():
             commit_file(self.cwd, name.replace("_", "."), text, name)
         r = job(self.cwd, "review-files", "main")
@@ -506,9 +643,93 @@ class ReviewFilesTest(unittest.TestCase):
         self.assertNotIn("b/gen.txt", bug)
         self.assertNotIn("b/gen.txt", spec)
         self.assertIn("b = 1", bug)
-        self.assertIn(".gitattributes", bug)  # 표시 자체는 리뷰에 남는다
         self.assertIn("3\t0\tgen.txt", out)
         self.assertIn("gen.txt(3줄, linguist-generated)", job(self.cwd, "show").stdout)
+
+    def test_이_브랜치가_더한_표시는_빼지_않고_그_사실을_알린다(self):
+        # 브랜치가 스스로 표시를 더해 자기 파일을 리뷰에서 빼지 못하게, base 의 .gitattributes 에 있는 표시만 본다
+        out, bug, spec = self.files(None, branch_attributes="gen.txt linguist-generated\n", gen_txt="1\n2\n")
+        self.assertIn("b/gen.txt", bug)
+        self.assertIn("b/gen.txt", spec)
+        self.assertIn("b/.gitattributes", bug)  # 표시의 변경 자체도 리뷰에 남는다
+        self.assertIn("이 브랜치가 .gitattributes 를 바꿨다", out)
+        self.assertNotIn("뺀 파일", out)
+
+    def test_base_의_표시를_이_브랜치가_지워도_base_의_표시로_뺀다(self):
+        out, bug, _ = self.files("gen_txt linguist-generated\n".replace("_", "."), branch_attributes="", gen_txt="1\n")
+        self.assertNotIn("b/gen.txt", bug)
+        self.assertIn("이 브랜치가 .gitattributes 를 바꿨다", out)
+
+    def test_이_브랜치가_더한_diff_끄기_표시로_내용을_숨기지_못한다(self):
+        # git diff 도 base 의 표시로 만든다. 브랜치가 -diff 를 더하면 Binary files ... differ 한 줄만 남았다
+        out, bug, spec = self.files(None, branch_attributes="b.py -diff\nc.py binary\n", b_py="b = 1\n", c_py="c = 2\n")
+        self.assertIn("+b = 1", bug)
+        self.assertIn("+c = 2", bug)
+        self.assertIn("+b = 1", spec)
+
+    def test_표시된_폴더로_옮기거나_빼낸_파일의_변경도_리뷰에_든다(self):
+        # 이름 바꿈으로 읽으면 새 경로만 보고 걸러, 옮긴 파일의 지움이나 새 내용이 리뷰에서 빠진다
+        subprocess.run(["git", "switch", "-q", "main"], cwd=self.cwd, check=True)
+        commit_file(self.cwd, ".gitattributes", "gen/** linguist-generated\n", "표시")
+        commit_file(self.cwd, "gen/old.py", "".join("g%d = %d\n" % (i, i) for i in range(30)), "생성")
+        commit_file(self.cwd, "src/x.py", "".join("s%d = %d\n" % (i, i) for i in range(30)), "소스")
+        subprocess.run(["git", "switch", "-q", "feat/x"], cwd=self.cwd, check=True)
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid", "merge", "-q", "--no-edit",
+                        "main"], cwd=self.cwd, check=True)
+        git = ["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid"]
+        subprocess.run(["git", "mv", "src/x.py", "gen/x.py"], cwd=self.cwd, check=True)
+        subprocess.run(["git", "mv", "gen/old.py", "src/old.py"], cwd=self.cwd, check=True)
+        subprocess.run(git + ["commit", "-q", "-m", "옮김"], cwd=self.cwd, check=True)
+        r = job(self.cwd, "review-files", "main")
+        with open(os.path.join(self.cwd, ".fade-review", "bug.patch"), encoding="utf-8") as f:
+            bug = f.read()
+        self.assertIn("-s29 = 29", bug)  # 표시된 폴더로 옮긴 소스의 지움
+        self.assertIn("+g29 = 29", bug)  # 표시된 폴더에서 빼낸 파일의 새 내용
+        self.assertNotIn("bug.patch 가 비었다", r.stdout)
+
+    def test_diff_접두어_설정과_HEAD_라는_파일에_흔들리지_않는다(self):
+        subprocess.run(["git", "config", "diff.noprefix", "true"], cwd=self.cwd, check=True)
+        out, bug, _ = self.files("gen_txt linguist-generated\n".replace("_", "."), gen_txt="1\n", HEAD="x\n", b_py="b = 1\n")
+        self.assertNotIn("gen.txt", bug)
+        self.assertIn("gen.txt(1줄, linguist-generated)", out)
+        self.assertIn("+b = 1", bug)
+        self.assertEqual(job(self.cwd, "review", "0", "버그 축만").returncode, 0)
+        commit_file(self.cwd, "HEAD", "y\n", "다시 하는 리뷰")  # 범위 [앞 리뷰 커밋, HEAD] 에서 HEAD 가 파일 이름과 겹친다
+        r = job(self.cwd, "review-files", "main")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        with open(os.path.join(self.cwd, ".fade-review", "bug.patch"), encoding="utf-8") as f:
+            self.assertIn("+y", f.read())
+
+    def test_이_브랜치가_더한_diff_끄기_표시도_줄_수에서_빠지지_않는다(self):
+        out, _, _ = self.files(None, branch_attributes="b.py -diff\n", b_py="b = 1\nb2 = 2\n")
+        self.assertIn("2\t0\tb.py", out)
+
+    def test_한글_이름_파일도_뺀_줄_수와_조각_목록이_바로_나온다(self):
+        out, bug, _ = self.files("한글_생성.txt linguist-generated\n".replace("_생성", "생성"), **{"한글생성_txt": "1\n2\n"})
+        self.assertIn("한글생성.txt(2줄, linguist-generated)", out)
+        big = "".join("v_%d = %d\n" % (i, i) for i in range(2500))
+        out, _, _ = self.files(None, **{"큰파일_py": big, "작은_py": "s = 1\n"})
+        self.assertIn("큰파일.py", out)
+        self.assertNotIn("\\3", out)
+
+    def test_표시된_파일이_아주_많아도_리뷰_파일을_만든다(self):
+        subprocess.run(["git", "switch", "-q", "main"], cwd=self.cwd, check=True)
+        commit_file(self.cwd, ".gitattributes", "gen/** linguist-generated\n", "표시")
+        subprocess.run(["git", "switch", "-q", "feat/x"], cwd=self.cwd, check=True)
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid", "merge", "-q", "--no-edit",
+                        "main"], cwd=self.cwd, check=True)
+        gen = os.path.join(self.cwd, "gen")
+        os.makedirs(gen)
+        name = "a_generated_file_with_a_rather_long_name_%05d.txt"
+        for i in range(40000):  # 뺄 경로를 인자로 넘기면 인자 한도(macOS 1MB, Linux 2MB)를 넘는 길이
+            with open(os.path.join(gen, name % i), "w") as f:
+                f.write("x\n")
+        subprocess.run(["git", "add", "gen"], cwd=self.cwd, check=True)
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-q", "-m", "생성"],
+                       cwd=self.cwd, check=True)
+        r = job(self.cwd, "review-files", "main")
+        self.assertEqual(r.returncode, 0, r.stderr[-2000:])
+        self.assertIn("bug.patch 가 비었다", r.stdout)
 
     def test_linguist_generated_true_도_빠지고_표시가_남는다(self):
         out, bug, _ = self.files("gen_txt linguist-generated=true\n".replace("_", "."), gen_txt="1\n")

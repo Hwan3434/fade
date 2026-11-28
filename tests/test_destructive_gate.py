@@ -91,6 +91,54 @@ class DestructiveGateTest(unittest.TestCase):
         self.assertAllowed("cd " + self.cwd + " && rm -rf *")  # /tmp 는 CI 에서 가짜 홈의 위 폴더라 쓰지 않는다
         self.assertAllowed("cd ~/projects && rm -rf build")
 
+    def test_cd_에_리다이렉트가_붙어도_cd_의_첫_인자를_폴더로_본다(self):
+        for command in ("cd ~ >/dev/null 2>&1 && rm -rf *", "cd ~ 2>/dev/null && rm -rf .", "cd ~ > /dev/null; rm -rf .",
+                        "cd $HOME 2>&1 && rm -rf *", "cd ${HOME} >/dev/null && rm -rf .", "cd ~ 1>&2 && rm -rf *"):
+            self.assertBlocked(command)
+        self.assertAllowed("cd " + self.cwd + " >/dev/null 2>&1 && rm -rf *")
+
+    def test_폴더를_알_수_없는_cd_뒤에는_그_폴더째_지우는_삭제를_막는다(self):
+        # 셸 변수는 비어 있으면 cd 가 홈으로 가고, 없는 폴더로의 cd 가 실패하면 ; 뒤의 rm 은 앞 폴더에서 돈다
+        for command in ('cd "$WT" && rm -rf .', "cd $X && rm -rf *", 'cd "$WT"; rm -rf ..',
+                        'cd "$WT" && rm -rf ./', 'cd "$WT" && rm -rf a/../..'):
+            self.assertBlocked(command)
+        for command in ('cd "$WT" && rm -rf .fade-review/parts', 'cd "$WT" && rm -rf build *.log',
+                        'cd "$WT" && rm -rf ' + os.path.join(self.cwd, "x"), "cd /no/such/dir && rm -f *"):
+            self.assertAllowed(command)
+
+    def test_같은_줄에서_만든_폴더로_cd_한_뒤의_삭제는_그_폴더로_본다(self):
+        # 글자로 적은 경로는 아직 없어도 그 경로로 푼다. 알 수 없는 것은 셸 변수와 명령 치환뿐이다
+        self.assertAllowed("mkdir -p out && cd out && rm -rf *")
+        self.assertAllowed("mkdir -p out && cd out &&\nrm -rf *")
+        self.assertBlocked("cd ~/no-such-dir/.. && rm -rf *")
+
+    def test_없는_폴더로의_cd_가_실패해도_이어_도는_rm_은_앞_폴더에서_본다(self):
+        # ; || 줄바꿈 뒤의 rm 은 cd 가 실패해도 돈다. 그때 글자 그대로의 경로로 풀면 홈 삭제를 놓친다
+        for command in ("cd ~/no-such-typo 2>/dev/null; rm -rf .*", "cd build || true; rm -rf *", "cd nope\nrm -rf .",
+                        "cd /no/such/dir; rm -rf .*"):
+            self.assertBlocked(command, cwd=self.home)
+
+    def test_현재_폴더_변수로_가리킨_홈_삭제도_막는다(self):
+        for command in ('rm -rf "$PWD"', "rm -rf ${PWD}/*", 'rm -rf "$(pwd)"'):
+            self.assertBlocked(command, cwd=self.home)
+        self.assertAllowed('rm -rf "$PWD/build"', cwd=self.home)
+        self.assertBlocked('cd "$X"; rm -rf "$PWD"', cwd=self.home)  # 폴더를 알 수 없으면 $PWD 도 알 수 없는 폴더다
+        self.assertBlocked("cat > n.md <<EOF\nEOF) it's\nEOF\nrm -rf ~")
+
+    def test_감싸는_명령과_그_옵션_뒤의_삭제도_본다(self):
+        for command in ("timeout 5 rm -rf ~", "sudo -u root rm -rf ~", "env -i rm -rf ~", "nice -n 10 rm -rf ~",
+                        "time -p rm -rf ~", "sudo -E rm -rf /"):
+            self.assertBlocked(command)
+
+    def test_명령_치환_안의_heredoc_본문에_홀수_따옴표가_있어도_뒤의_홈_삭제를_막는다(self):
+        self.assertBlocked("git commit -m \"$(cat <<'EOF'\nsay \"hi\nEOF\n)\" && cd ~ && rm -rf *")
+
+    def test_삭제_훅은_병합_훅과_같은_명령_해석을_쓴다(self):
+        with open(DESTRUCTIVE, encoding="utf-8") as f:
+            src = f.read()
+        self.assertTrue("merge_gate.located(" in src)
+        self.assertFalse('name == "cd"' in src)  # cd 를 따로 해석하면 두 훅이 다시 어긋난다
+
     def test_끝_이름의_글롭은_그_폴더_안_전부로_본다(self):
         self.assertBlocked("rm -rf ~/.*")
         self.assertBlocked("rm -rf ~/.[!.]*")

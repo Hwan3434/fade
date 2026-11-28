@@ -86,6 +86,35 @@ class TempRepoTest(Base):
         self.assertEqual(job(self.cwd, "stop", "멈춤", env=env).returncode, 0)
         self.assertFalse(os.path.exists(self.default_log()))
 
+    def test_pr_과_mark_도_임시_레포에서는_기본_실수_기록을_건드리지_않는다(self):
+        env = self.no_log_env()
+        log = self.default_log()
+        os.makedirs(os.path.dirname(log))
+        row = {"time": "2999-01-01T00:00:00+0000", "repo": os.path.realpath(self.cwd), "branch": "feat/x", "pr": "",
+               "source": "ci", "what": "진짜 기록의 줄", "key": "k", "handled": ""}
+        with open(log, "w", encoding="utf-8") as f:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        self.assertEqual(job(self.cwd, "pr", "https://github.com/o/r/pull/7", env=env).returncode, 0)
+        r = job(self.cwd, "mark", "1", "handled", "x", env=env)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("임시 폴더", r.stderr)
+        self.assertEqual(mistakes(log), [row])
+        self.assertFalse(os.path.exists(log + ".lock"))
+
+    def test_mark_는_git_레포_밖에서는_임시_폴더라도_기본_실수_기록을_고친다(self):
+        # hardener 는 세션 임시 폴더 같은 레포 밖에서 mark 를 부를 수 있다. 고치는 것은 전역 기록이다
+        env = self.no_log_env()
+        log = self.default_log()
+        os.makedirs(os.path.dirname(log))
+        with open(log, "w", encoding="utf-8") as f:
+            f.write(json.dumps({"time": "2026-01-01T00:00:00+0000", "what": "x", "key": "", "handled": ""}) + "\n")
+        outside = tempfile.TemporaryDirectory()
+        self.addCleanup(outside.cleanup)
+        r = subprocess.run([sys.executable, os.path.join(ROOT, "skills", "job", "job.py"), "mark", "1", "key", "k"],
+                           cwd=outside.name, env=env, capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(mistakes(log)[0]["key"], "k")
+
     def test_FADE_MISTAKES_를_정하면_임시_레포에서도_쓴다(self):
         path, env = self.own_log()
         self.assertEqual(job(self.cwd, "slip", "user", "branch-name", "지적", env=env).returncode, 0)
@@ -119,6 +148,19 @@ class TempRepoTest(Base):
         ask = self.hook(PERMISSION, {"hook_event_name": "PermissionRequest", "tool_name": "Bash",
                                      "tool_input": {"command": "git rebase origin/main"}}, env)
         self.assertEqual(ask["decision"]["behavior"], "deny")
+        self.assertFalse(os.path.exists(self.default_log()))
+
+    def test_써_보기_세션은_임시_폴더_밖의_레포에서도_기본_실수_기록에_쓰지_않는다(self):
+        common = subprocess.run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], cwd=ROOT,
+                                capture_output=True, text=True).stdout.strip()
+        outside = tempfile.TemporaryDirectory(dir=common)
+        self.addCleanup(outside.cleanup)
+        subprocess.run(["git", "init", "-q", outside.name], check=True)
+        commit_and_switch(outside.name, "feat/x")
+        env = dict(self.no_log_env(), FADE_TRY_REPO=outside.name)
+        job(outside.name, "start", "작업", env=env)
+        r = job(outside.name, "slip", "user", "k", "써 보기의 지적", env=env)
+        self.assertEqual(r.returncode, 0, r.stderr)
         self.assertFalse(os.path.exists(self.default_log()))
 
     def test_임시_폴더_밖의_레포는_기본_실수_기록에_쓴다(self):
@@ -160,6 +202,16 @@ class SlipKeyTest(Base):
             self.assertNotEqual(job(self.cwd, "slip", "user", key, "지적", env=env).returncode, 0, key)
         self.assertEqual(mistakes(path), [])
 
+    def test_새_key_를_지으면_있는_key_를_보여_같은_실수인지_보게_한다(self):
+        path, env = self.own_log()
+        job(self.cwd, "slip", "review", "branch-name", "브랜치 이름", env=env)
+        r = job(self.cwd, "slip", "user", "branch-naming", "브랜치 이름을 또", env=env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("branch-name", r.stdout)
+        self.assertIn("mark", r.stdout)
+        again = job(self.cwd, "slip", "user", "branch-name", "또", env=env).stdout
+        self.assertNotIn("새 key", again)
+
     def test_같은_key_가_몇_번째인지_알린다(self):
         path, env = self.own_log()
         job(self.cwd, "slip", "user", "pr-number", "첫째", env=env)
@@ -177,6 +229,17 @@ class SlipKeyTest(Base):
         with open(path, encoding="utf-8") as f:
             last = json.loads(f.read().splitlines()[-1])
         self.assertEqual((last["what"], last["pr"]), ("이번", "https://github.com/o/r/pull/7"))
+
+    def test_실수_기록에_객체가_아닌_줄이_있어도_slip_과_mark_가_죽지_않는다(self):
+        path, env = self.own_log()
+        job(self.cwd, "slip", "review", "k", "앞", env=env)
+        with open(path, "a", encoding="utf-8") as f:
+            f.write("[1, 2]\n")
+        r = job(self.cwd, "slip", "review", "k2", "뒤", env=env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        r = job(self.cwd, "mark", "2", "key", "x", env=env)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertNotIn("Traceback", r.stderr)
 
     def test_tester_가_찾은_버그는_try_로_남긴다(self):
         path, env = self.own_log()
@@ -213,12 +276,100 @@ class PrFillTest(Base):
         self.assertEqual([(m["what"], m["pr"]) for m in mistakes(path)],
                          [("예전", ""), ("다른 레포", ""), ("이번", "https://github.com/o/r/pull/7")])
 
+    def test_다른_브랜치의_줄은_바꾸지_않는다(self):
+        path, env = self.own_log()
+        job(self.cwd, "slip", "review", "k", "이번", env=env)
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"time": "2999-01-01T00:00:00+0000", "repo": os.path.realpath(self.cwd),
+                                "branch": "feat/other", "pr": "", "source": "ci", "what": "다른 브랜치"}) + "\n")
+        job(self.cwd, "pr", "https://github.com/o/r/pull/7", env=env)
+        self.assertEqual([(m["what"], m["pr"]) for m in mistakes(path)],
+                         [("이번", "https://github.com/o/r/pull/7"), ("다른 브랜치", "")])
+
+    def test_시간대가_다르게_찍힌_줄도_시각으로_견준다(self):
+        import time as t
+        path, env = self.own_log()
+        env = dict(env, TZ="Asia/Seoul")
+        later = t.gmtime(t.time() + 60 - 12 * 3600)  # 작업 시작 1분 뒤를 UTC-12 로 적은 시각
+        os.makedirs(os.path.dirname(path))
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(json.dumps({"time": t.strftime("%Y-%m-%dT%H:%M:%S-1200", later), "repo": os.path.realpath(self.cwd),
+                                "branch": "feat/x", "pr": "", "source": "ci", "what": "다른 시간대"}) + "\n")
+        job(self.cwd, "pr", "https://github.com/o/r/pull/7", env=env)
+        self.assertEqual(mistakes(path)[0]["pr"], "https://github.com/o/r/pull/7")
+
+    def test_브랜치_이름을_바꾸기_전에_찍힌_이_작업의_줄도_채운다(self):
+        path, env = self.own_log()
+        job(self.cwd, "slip", "review", "k", "바꾸기 전", env=env)
+        subprocess.run(["git", "branch", "-m", "feat/renamed"], cwd=self.cwd, check=True)
+        job(self.cwd, "slip", "ci", "k", "바꾼 뒤", env=env)
+        job(self.cwd, "pr", "https://github.com/o/r/pull/7", env=env)
+        self.assertEqual([m["pr"] for m in mistakes(path)], ["https://github.com/o/r/pull/7"] * 2)
+
+    def test_base_에서_시작해_브랜치를_딴_작업은_base_의_줄을_채우지_않는다(self):
+        path, env = self.own_log()
+        other = tempfile.TemporaryDirectory()
+        self.addCleanup(other.cleanup)
+        subprocess.run(["git", "init", "-q", other.name], check=True)
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@x", "commit", "-q", "--allow-empty", "-m", "x"],
+                       cwd=other.name, check=True)
+        subprocess.run(["git", "switch", "-q", "-C", "main"], cwd=other.name, check=True)
+        job(other.name, "start", "작업", env=env)
+        job(other.name, "slip", "ci", "k", "main 에서 찍힌 다른 줄", env=env)
+        subprocess.run(["git", "switch", "-q", "-c", "feat/z"], cwd=other.name, check=True)
+        job(other.name, "slip", "ci", "k", "이 작업", env=env)
+        job(other.name, "pr", "https://github.com/o/r/pull/9", env=env)
+        self.assertEqual([(m["what"], m["pr"]) for m in mistakes(path)],
+                         [("main 에서 찍힌 다른 줄", ""), ("이 작업", "https://github.com/o/r/pull/9")])
+
     def test_이미_pr_이_있는_줄은_그대로다(self):
         path, env = self.own_log()
         job(self.cwd, "pr", "https://github.com/o/r/pull/7", env=env)
         job(self.cwd, "slip", "ci", "k", "CI", env=env)
         job(self.cwd, "pr", "https://github.com/o/r/pull/8", env=env)
         self.assertEqual(mistakes(path)[0]["pr"], "https://github.com/o/r/pull/7")
+
+
+class RewriteTest(Base):
+    """실수 기록을 다시 쓰는 명령(pr, mark)은 줄바꿈 글자로만 줄을 나눈다. 기록이 이상해도 pr 은 PR 을 작업 기록에 남긴다."""
+
+    def test_줄_구분이_아닌_유니코드_줄바꿈_글자에서_줄을_끊지_않는다(self):
+        path, env = self.own_log()
+        for what in ("앞\u2028뒤", "가\u2029나\x85다"):
+            self.assertEqual(job(self.cwd, "slip", "review", "k", what, env=env).returncode, 0)
+        job(self.cwd, "slip", "ci", "k", "셋째", env=env)
+        self.assertEqual(job(self.cwd, "pr", "https://github.com/o/r/pull/7", env=env).returncode, 0)
+        self.assertEqual([(m["what"], m["pr"]) for m in mistakes(path)],
+                         [(w, "https://github.com/o/r/pull/7") for w in ("앞\u2028뒤", "가\u2029나\x85다", "셋째")])
+        r = job(self.cwd, "mark", "3", "handled", "x", env=env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual([m["handled"] for m in mistakes(path)], ["", "", "x"])
+
+    def pr_recorded(self, env):
+        r = job(self.cwd, "pr", "https://github.com/o/r/pull/7", env=env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("PR 을 기록했다", r.stdout)
+        self.assertIn("https://github.com/o/r/pull/7", job(self.cwd, "show", env=env).stdout)
+        return r
+
+    def test_실수_기록에_객체가_아닌_줄이나_글자가_아닌_time_이_있어도_PR_을_남긴다(self):
+        path, env = self.own_log()
+        job(self.cwd, "slip", "review", "k", "이번", env=env)
+        with open(path, "a", encoding="utf-8") as f:
+            f.write("[1, 2]\n" + json.dumps({"time": 5, "repo": "/x", "branch": "feat/x", "pr": ""}) + "\n")
+        self.pr_recorded(env)
+        self.assertEqual(mistakes(path)[0]["pr"], "https://github.com/o/r/pull/7")
+
+    def test_실수_기록_폴더에_쓸_수_없어도_PR_을_남기고_그_사실을_알린다(self):
+        path, env = self.own_log()
+        job(self.cwd, "slip", "review", "k", "이번", env=env)
+        if hasattr(os, "geteuid") and os.geteuid() == 0:
+            self.skipTest("root 는 쓸 수 없는 폴더에도 쓴다")
+        os.remove(path + ".lock")
+        os.chmod(os.path.dirname(path), 0o500)
+        self.addCleanup(os.chmod, os.path.dirname(path), 0o700)
+        r = self.pr_recorded(env)
+        self.assertIn("실수 기록", r.stdout)
 
 
 class LockTest(Base):
@@ -244,6 +395,25 @@ class LockTest(Base):
         self.assertEqual(p.wait(timeout=30), 0, p.stderr.read())
         self.assertEqual([(m["what"], m["pr"]) for m in mistakes(path)],
                          [("이번", "https://github.com/o/r/pull/7"), ("다른 세션", "")])
+
+
+class AppendLockTest(Base):
+    """붙이는 쪽(slip, 훅)도 다시 쓰는 쪽과 같은 잠금을 잡는다. 잡지 않으면 다시 쓰는 사이 붙인 줄이 사라진다."""
+
+    def test_slip_은_잠금을_기다린다(self):
+        import fcntl
+        path, env = self.own_log()
+        job(self.cwd, "slip", "review", "k", "먼저", env=env)
+        with open(path + ".lock", "a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            p = subprocess.Popen([sys.executable, os.path.join(ROOT, "skills", "job", "job.py"), "slip", "ci", "k", "나중"],
+                                 cwd=self.cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            try:
+                p.wait(timeout=1.5)
+                self.fail("slip 이 잠금을 기다리지 않았다")
+            except subprocess.TimeoutExpired:
+                pass
+        self.assertEqual(p.wait(timeout=30), 0, p.stderr.read())
 
 
 class TempFileTest(Base):

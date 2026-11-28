@@ -44,6 +44,83 @@ class CrashTest(Repo):
         self.denied("git -C /nonexistent/fade-x push origin HEAD:main; gh pr merge 3", self.wt)
 
 
+class ParseTest(Repo):
+    """따옴표로 묶은 글자는 리다이렉트도 명령 구분도 아니다. 리다이렉트에 붙은 fd 번호는 인자가 아니다.
+    따옴표 친 heredoc 의 끝 글에 - 나 . 이 있어도 본문은 명령이 아니다."""
+
+    def seg(self, command, cwd=None):
+        import merge_gate
+        return [seg for _, seg in merge_gate.located(command, cwd or self.main)]
+
+    def test_따옴표로_묶은_리다이렉트_글자는_인자로_남는다(self):
+        import merge_gate
+        self.assertEqual(self.seg('git merge -m ">" feat/x'), [["git", "merge", "-m", ">", "feat/x"]])
+        self.denied('git merge -m ">" feat/x', self.main)
+        self.denied("git merge -m '>>' feat/x", self.main)
+        merge = self.seg('gh pr merge --body ">" 3')[0]
+        self.assertEqual(merge_gate.pr_target(merge[3:]), (["3"], []))
+        self.assertEqual(self.seg('git commit -m "a;b|c&d" && echo x'), [["git", "commit", "-m", "a;b|c&d"], ["echo", "x"]])
+
+    def test_리다이렉트에_붙은_fd_번호는_PR_번호가_아니다(self):
+        import merge_gate
+        segs = self.seg("gh pr merge --squash 2>&1 | tail -1")
+        self.assertEqual(segs[0], ["gh", "pr", "merge", "--squash"])
+        self.assertEqual(merge_gate.pr_target(segs[0][3:]), ([], []))
+
+    def test_폴더를_몰라도_base_를_적은_push_는_세션_폴더의_기록으로_본다(self):
+        self.denied("cd /nonexistent/fade-x; git push origin HEAD:main", self.wt)
+        self.denied('cd "$WT" && git push origin HEAD:refs/heads/main', self.wt)
+        self.assertIsNone(self.gate("cd /nonexistent/fade-x; git push origin HEAD", self.wt))
+
+    def test_따옴표_친_heredoc_의_끝_글에_하이픈이나_점이_있어도_본문은_명령이_아니다(self):
+        for command in ("cat > n.md <<'END-NOTES'\ngit merge feat/x\nEND-NOTES",
+                        'cat > n.md << "A.B"\ngit merge feat/x\nA.B', "cat > n.md <<-'X-1'\n\tgit merge feat/x\n\tX-1"):
+            self.assertIsNone(self.gate(command, self.main), command)
+        self.denied("cat > n.md <<'END-NOTES'\nbody\nEND-NOTES\ngit merge feat/x", self.main)
+
+    def test_명령_치환_안의_heredoc_본문은_따옴표가_홀수여도_명령이_아니다(self):
+        # git commit -m "$(cat <<'EOF' ... EOF )" 는 커밋 메시지의 표준 꼴이다. 본문의 따옴표나 명령 같은 줄에 흔들리지 않는다
+        msg = "git commit -m \"$(cat <<'EOF'\nsay \"hi\ngit merge feat/x\nEOF\n)\""
+        self.assertEqual(self.seg(msg)[0][:3], ["git", "commit", "-m"])
+        self.assertEqual(len(self.seg(msg)), 1)
+        self.assertIsNone(self.gate(msg, self.main))
+        self.denied(msg + " && git merge feat/x", self.main)
+        # 여러 줄 따옴표 글 안의 <<EOF 글자는 heredoc 이 아니다. 뒤 줄을 삼키지 않는다
+        self.denied('git commit -m "a\nuse <<EOF here\nb"\ngit merge feat/x', self.main)
+
+    def test_달러_작은따옴표와_백틱_치환_안의_heredoc_도_훅을_죽이지_않는다(self):
+        for command in ("printf $'it\\'s'\ncat > n.md <<'EOF'\nsay \"hi\nEOF\ngit push origin HEAD:main",
+                        'git commit -m "`cat <<\'EOF\'\nsay "hi\nEOF\n`" && git push origin HEAD:main',
+                        "git commit -m \"$(cat <<'EOF'\nsay \"hi\nEOF)\" && git push origin HEAD:main"):
+            self.denied(command, self.wt)
+
+    def test_명령_치환_밖의_heredoc_은_끝_글_뒤_괄호_줄에서_끝나지_않는다(self):
+        self.denied("cat > n.md <<EOF\nEOF) it's fine\nEOF\ngit merge feat/x", self.main)
+
+    def test_따옴표_없는_heredoc_끝_글에_하이픈이_있어도_그_줄까지가_본문이다(self):
+        self.assertIsNone(self.gate("cat > n.md <<END-NOTES\ngit merge feat/x\nEND-NOTES", self.main))
+        self.denied("cat > n.md <<END-NOTES\nbody\nEND-NOTES\ngit merge feat/x", self.main)
+
+    def test_감싸는_명령과_그_옵션_뒤의_병합도_본다(self):
+        for command in ("timeout 60 gh pr merge 3 --squash", "timeout -k 5 60 gh pr merge 3", "nice -n 5 git merge feat/x",
+                        "time -p git merge feat/x", "sudo -u root git merge feat/x", "env -i git merge feat/x",
+                        "env -u X FOO=1 git merge feat/x"):
+            self.denied(command, self.main)
+
+    def test_폴더를_알_수_없는_cd_뒤의_병합은_세션_폴더로_본다(self):
+        for command in ("cd /nonexistent; git merge feat/x", "cd /nonexistent || git merge feat/x",
+                        "cd /nonexistent\ngit merge feat/x"):
+            self.denied(command, self.main)
+
+    def test_산술의_시프트와_따옴표_안의_꺾쇠_둘은_heredoc_이_아니다(self):
+        for command in ("echo $((1<<2))\ngit merge feat/x", "n=$((1<<bits))\ngit merge feat/x", "((x<<=y))\ngit merge feat/x",
+                        "echo $(( (1<<n) + 1 ))\ngit merge feat/x",
+                        'git commit -m "use a<<b"\ngit merge feat/x',
+                        "python3 -c 'print(1 << 2)'\ngit merge feat/x"):
+            self.denied(command, self.main)
+        self.assertIsNone(self.gate("cat <<END_NOTES\ngit merge feat/x\nEND_NOTES", self.main))
+
+
 class RedirectNumberTest(Repo):
     """리다이렉트에 붙은 숫자(2>&1 의 2)만 fd 번호다. 띄어 쓴 숫자(gh pr merge 3 >/dev/null 의 3)는 PR 번호로 남는다."""
 
