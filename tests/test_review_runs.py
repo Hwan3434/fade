@@ -672,6 +672,12 @@ class ReviewFilesTest(unittest.TestCase):
         self.assertNotIn("gen.txt", bug)
         self.assertIn("gen.txt(1줄, linguist-generated)", out)
         self.assertIn("+b = 1", bug)
+        self.assertEqual(job(self.cwd, "review", "0", "버그 축만").returncode, 0)
+        commit_file(self.cwd, "HEAD", "y\n", "다시 하는 리뷰")  # 범위 [앞 리뷰 커밋, HEAD] 에서 HEAD 가 파일 이름과 겹친다
+        r = job(self.cwd, "review-files", "main")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        with open(os.path.join(self.cwd, ".fade-review", "bug.patch"), encoding="utf-8") as f:
+            self.assertIn("+y", f.read())
 
     def test_한글_이름_파일도_뺀_줄_수와_조각_목록이_바로_나온다(self):
         out, bug, _ = self.files("한글_생성.txt linguist-generated\n".replace("_생성", "생성"), **{"한글생성_txt": "1\n2\n"})

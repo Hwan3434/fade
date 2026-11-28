@@ -76,7 +76,7 @@ FADE_MISTAKES 를 정하지 않은 동안 쓰지 않는다. PR 을 기록하면 
   job.py stop    <이유>                  해결하지 못했거나 사용자 결정이 필요해 멈춘다. 병합을 막고 실수 기록에 남긴다
   job.py resume  <누가 무엇을 근거로 풀었나>
                                          사람(또는 사람이 맡긴 리드)이 멈춘 이유를 확인한 뒤 멈춤을 푼다. 멈춘 이유와 푼 근거가
-                                         기록에 남는다. 사람 없는 작업을 돈 세션은 스스로 풀지 못한다(fade 훅 lead_gate 가 막는다)
+                                         기록에 남는다. 사람 없는 작업이나 dispatch 워커를 돈 세션은 스스로 풀지 못한다(fade 훅 lead_gate 가 막는다)
   job.py slip    review|ci|try|user <key> <무엇을 잘못했나>
                                          리뷰에서 고친 막는 지적, CI 실패, 써 보기(tester)가 찾은 버그, 사용자 지적을 실수 기록에
                                          남긴다. key 는 같은 실수끼리 묶는 이름(영문 소문자, 숫자, -)이다. 같은 실수의 key 가
@@ -777,6 +777,8 @@ def line_counts(cwd, revs, paths):
     # 경로를 인자로 넘기면 뺄 파일이 아주 많을 때 인자 한도를 넘는다. 전체를 만들고 그 파일만 센다
     r = subprocess.run(["git", *DIFF_CONFIG, "diff", *DIFF_OPTIONS, "-a", *revs, "--"], cwd=cwd,
                        capture_output=True, text=True, errors="replace")
+    if r.returncode != 0:
+        return {}  # 줄 수 없이 이름과 표시만 알린다
     wanted = set(paths)
     counts, name = {}, None
     for line in r.stdout.splitlines():
