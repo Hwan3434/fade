@@ -6,7 +6,7 @@ import subprocess
 import tempfile
 import unittest
 
-from helpers import ROOT, commit_and_switch, commit_file, git_repo, job
+from helpers import READMES, ROOT, commit_and_switch, commit_file, git_repo, job
 
 GIT = ["git", "-c", "user.name=fade-test", "-c", "user.email=fade-test@example.invalid"]
 
@@ -312,13 +312,12 @@ class ReviewFilesTest(ReviewBase):
         self.assertIn("파일 1개, 더한 줄 99 + 뺀 줄 100 = 199줄", first)
 
     def test_줄_수_고정_기준이_어디에도_없다(self):
-        files = ["skills/job/job.py", "skills/job/stages/review.md", "README.md", "README.en.md", "README.ja.md",
-                 "README.zh.md"]
+        files = ["skills/job/job.py", "skills/job/stages/review.md", *READMES]
         for name in files:
             with open(os.path.join(ROOT, name), encoding="utf-8") as f:
                 text = f.read()
             self.assertNotIn("SPEC_REVIEW_LINES", text, name)
-            self.assertIsNone(re.search(r"\d+\s*(줄|lines?|行)\s*(이상|미만|or more|以上|未満|及以上)", text), name)
+            self.assertIsNone(re.search(r"\d+\s*(줄|lines?)\s*(이상|미만|or more)", text), name)
 
     def test_첫_리뷰는_base_와의_전체를_준다(self):
         commit_file(self.cwd, "src/big.py", lines(20))

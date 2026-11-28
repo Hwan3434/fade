@@ -1,8 +1,8 @@
 # fade
 
-[한국어](README.md) · [日本語](README.ja.md) · [中文](README.zh.md)
+[한국어](README.md)
 
-A skill plugin for Claude Code only. It is used in the Claude desktop app (Code tab) and the Claude CLI. If you use another agent, read the skills and adapt them to your environment. It was not built to gain features; it was built to shrink.
+A skill plugin for Claude Code only. It is not tied to any one app; it works wherever Claude Code runs locally. If you use another agent, read the skills and adapt them to your environment. It was not built to gain features; it was built to shrink.
 The goal is to delete prose as models get smarter until no lines are left, hence the name fade. What shrinks is the prose. The structure that guards the process (scripts, hooks, tests) stays.
 
 ## Why it exists
@@ -80,7 +80,7 @@ claude plugin marketplace add Hwan3434/fade
 claude plugin install fade@fade
 ```
 
-The desktop app reads the same settings, so installing once from the CLI makes it available in both. Claude cloud sessions do not load plugins. For a repo used in the cloud, put a copy of the skill folders in `.claude/skills/`. The copy has no `bin/`, so `job.py` is called in the other form the skill text gives (`python3 "${CLAUDE_SKILL_DIR}/job.py"`). claude.ai and Cowork do not install plugins that have a top-level `bin/`, so fade does not install there.
+fade is not added to a repo. It is a plugin installed once, at user scope, in a person's Claude Code and used across all their repos. A repo holds no files for fade (job records stay in the git folder, which is not committed). Each repo owns its rules and checks; fade only carries the way of working on top of them. So fade works only in Claude Code running locally. Cloud sessions do not load plugins, so neither the lead nor the workers run in the cloud.
 
 fade runs on macOS and Linux. `job.py` and the hooks use `fcntl` for file locks, so on Windows the hooks end in an error and block nothing, and `job.py` does not run.
 

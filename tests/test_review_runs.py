@@ -6,7 +6,7 @@ import tempfile
 import time
 import unittest
 
-from helpers import ROOT, commit_and_switch, commit_file, hook, job
+from helpers import READMES, ROOT, commit_and_switch, commit_file, hook, job
 
 REVIEW_GATE = os.path.join(ROOT, "hooks", "review_gate.py")
 MARKER = "## Phase 0 — Gather the diff"  # code-review 스킬의 지시문 머리. 앱에서는 본체 기록에, CLI 에서는 하위 에이전트 기록에 든다
@@ -811,7 +811,7 @@ class TextTest(unittest.TestCase):
             self.assertIn(word, review, word)
 
     def test_README_가_뺀_파일과_나눈_리뷰를_말한다(self):
-        for name in ("README.md", "README.en.md", "README.ja.md", "README.zh.md"):
+        for name in READMES:
             text = self.read(name)
             for word in ("linguist-generated", "parts/"):
                 self.assertIn(word, text, (name, word))

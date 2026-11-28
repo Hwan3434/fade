@@ -4,7 +4,7 @@ import re
 import subprocess
 import unittest
 
-from helpers import ROOT
+from helpers import READMES, ROOT
 
 # 모델은 사람마다 고르는 값이다. fade 의 어디에 박혀도 쓰는 사람의 선택을 덮는다
 # 한글은 단어 글자라 「Sonnet으로」에서 \b 가 갈리지 않는다. 앞뒤가 영문자가 아닌지만 본다
@@ -168,7 +168,7 @@ class ReportTextTest(unittest.TestCase):
         self.assertIn("기록 파일", hardener)
 
 
-BODY_WORD = re.compile(r"본문|PR (body|description)|本文|正文", re.I)
+BODY_WORD = re.compile(r"본문|PR (body|description)", re.I)
 
 
 def sentences(text):
@@ -190,7 +190,7 @@ class PrBodyTextTest(unittest.TestCase):
 
     def test_어느_글도_PR_본문에_기록_전문을_붙이게_하지_않는다(self):
         found = []
-        for rel in plugin_files() + ["README.md", "README.en.md", "README.ja.md", "README.zh.md"]:
+        for rel in plugin_files() + list(READMES):
             found += ["%s: %s" % (rel, s) for s in pastes_full_into_body(read(rel))]
         self.assertEqual(found, [])
 
@@ -284,16 +284,15 @@ class DispatchConditionsTest(unittest.TestCase):
             self.assertNotIn(word, self.text, word)
 
     def test_README_의_dispatch_설명과_원칙에_특정_방법의_이름이_없다(self):
-        for name in ("README.md", "README.en.md", "README.ja.md", "README.zh.md"):
+        for name in READMES:
             text = read(name)
             self.assertNotIn("Remote Control", text, name)
             lines = [l for l in text.splitlines() if l.startswith("- `dispatch`")]
             # 원칙 목록의 「여러 레포에서 같은 본문으로 쓰는 것만 담는다」 줄(어느 앱에서 도는지 정하지 않는다)
-            lines += [l for l in text.splitlines() if l.startswith("- ") and ("같은 본문" in l or "same text" in l
-                                                                             or "同じ本文" in l or "同样正文" in l)]
+            lines += [l for l in text.splitlines() if l.startswith("- ") and ("같은 본문" in l or "same text" in l)]
             self.assertEqual(len(lines), 2, name)
             for line in lines:
-                for word in self.METHOD_WORDS + ("desktop app", "デスクトップアプリ", "桌面应用", "session tool"):
+                for word in self.METHOD_WORDS + ("desktop app", "session tool"):
                     self.assertNotIn(word, line, (name, word))
 
     def test_조건_표가_남아_있다(self):
@@ -336,13 +335,13 @@ class EnvironmentWordsTest(unittest.TestCase):
         self.assertIn("FADE_TRY_REPO=", read("agents/tester.md"))
 
     def test_README_는_지원하는_운영체제를_적는다(self):
-        for name in ("README.md", "README.en.md", "README.ja.md", "README.zh.md"):
+        for name in READMES:
             self.assertIn("Windows", read(name), name)
 
     def test_README_의_dispatch_줄에_지운_같은_폴더_워커_문장이_없다(self):
-        for name in ("README.md", "README.en.md", "README.ja.md", "README.zh.md"):
+        for name in READMES:
             line = next(l for l in read(name).splitlines() if l.startswith("- `dispatch`"))
-            for word in ("리드와 같은 폴더", "직접 만든다", "same folder as the lead", "リードと同じフォルダ", "与主控相同的文件夹"):
+            for word in ("리드와 같은 폴더", "직접 만든다", "same folder as the lead"):
                 self.assertNotIn(word, line, (name, word))
 
 

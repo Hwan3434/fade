@@ -1,8 +1,8 @@
 # fade
 
-[English](README.en.md) · [日本語](README.ja.md) · [中文](README.zh.md)
+[English](README.en.md)
 
-Claude Code 전용 스킬 플러그인이다. Claude 데스크톱 앱(Code 탭)과 Claude CLI 에서 쓴다. 다른 에이전트를 쓰는 사람은 스킬을 읽고 자기 환경에 맞게 고쳐 쓰면 된다. 기능을 늘리려고 만든 도구가 아니라, 줄어들려고 만든 도구다.
+Claude Code 전용 스킬 플러그인이다. 특정 앱에 묶이지 않고, 로컬에서 도는 Claude Code 면 어디서든 쓴다. 다른 에이전트를 쓰는 사람은 스킬을 읽고 자기 환경에 맞게 고쳐 쓰면 된다. 기능을 늘리려고 만든 도구가 아니라, 줄어들려고 만든 도구다.
 모델이 똑똑해질수록 글을 지워 결국 0줄이 되는 것이 목표라 이름이 fade 다. 줄어드는 것은 글이다. 과정을 지키는 구조(스크립트, 훅, 테스트)는 남는다.
 
 ## 왜 만들었나
@@ -80,7 +80,7 @@ claude plugin marketplace add Hwan3434/fade
 claude plugin install fade@fade
 ```
 
-데스크톱 앱은 같은 설정을 읽으므로 CLI 로 한 번 설치하면 둘 다에서 쓴다. Claude 클라우드 세션은 플러그인을 읽지 않는다. 클라우드에서 쓸 레포에는 스킬 폴더 사본을 `.claude/skills/` 에 넣는다. 사본에는 `bin/` 이 없으니 `job.py` 는 스킬 글이 적은 다른 모양(`python3 "${CLAUDE_SKILL_DIR}/job.py"`)으로 불린다. claude.ai 와 Cowork 는 최상위에 `bin/` 이 있는 플러그인을 설치하지 않으므로 fade 도 그곳에는 설치되지 않는다.
+fade 는 레포에 넣지 않고 사람의 Claude Code 에 사용자 범위로 한 번 깔아 모든 레포에서 쓰는 플러그인이다. 레포에는 fade 를 위한 파일을 두지 않는다(작업 기록은 커밋되지 않는 git 폴더 안에 둔다). 레포의 규칙과 검사는 그 레포가 맡고, fade 는 그 위에서 일하는 방식만 담는다. 그래서 fade 는 로컬에서 도는 Claude Code 에서만 쓴다. 클라우드 세션은 플러그인을 읽지 않아 리드도 워커도 클라우드에서는 돌지 않는다.
 
 macOS 와 Linux 에서 돈다. `job.py` 와 훅이 파일 잠금에 `fcntl` 을 써서, Windows 에서는 훅이 오류로 끝나 아무것도 막지 못하고 `job.py` 가 돌지 않는다.
 
