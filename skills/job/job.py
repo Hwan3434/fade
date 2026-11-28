@@ -219,7 +219,7 @@ def unquoted_pipe(command):
         if c == "\\" and quote != "'":
             i += 2
             continue
-        if quote is None and c == "#" and (i == 0 or command[i - 1].isspace()):  # 주석은 줄 끝까지 건너뛴다
+        if quote is None and c == "#" and (i == 0 or command[i - 1].isspace() or command[i - 1] in ";&|("):  # 주석
             j = command.find("\n", i)
             i = n if j < 0 else j
             continue
@@ -246,6 +246,11 @@ OPERATORS = {";", "&", "&&", "|", "||", "|&", "(", ")", "\n"}
 INTERPRETERS = re.compile(r"^(sh|bash|zsh|dash|python\S*|node|ruby|perl|source|\.)$")
 # 명령을 감싸는 명령: 그 옵션(과 timeout 의 시간, nice 의 값)을 건너뛴 다음 낱말이 명령 자리다
 WRAPPING = re.compile(r"^(timeout|env|nice|nohup|sudo|time|command|exec|stdbuf|ionice|xargs)$")
+# 감싸는 명령과 해석기의 옵션 가운데 값을 따로 받는 것. 그 값은 명령 낱말이 아니다
+VALUE_OPTIONS = {"sudo": {"-u", "-g", "-p", "-C", "-D", "-h", "-R", "-T", "-U", "-r", "-t"}, "env": {"-u", "-C", "-S"},
+                 "nice": {"-n"}, "timeout": {"-s", "-k"}, "time": {"-f", "-o"}, "stdbuf": {"-i", "-o", "-e"},
+                 "ionice": {"-c", "-n", "-p"}, "xargs": {"-n", "-I", "-L", "-P", "-d", "-s", "-E"}, "exec": {"-a"},
+                 "sh": {"-o", "-O"}, "bash": {"-o", "-O"}, "zsh": {"-o"}, "dash": {"-o"}, "python": {"-W", "-X"}}
 
 
 def command_words(command):
@@ -258,21 +263,28 @@ def command_words(command):
         tokens = list(lex)
     except ValueError:
         return None
-    words, at_command, wrapped = [], True, False
+    words, at_command, wrapped, owner, skip = [], True, False, "", False
     for tok in tokens:
         if tok in OPERATORS or set(tok) <= set(";&|()\n"):
-            at_command, wrapped = True, False
+            at_command, wrapped, owner, skip = True, False, "", False
             continue
         if not at_command:
             continue
+        if skip:
+            skip = False  # 앞 옵션의 값(sudo -u root 의 root)
+            continue
         if "=" in tok and not tok.startswith("-"):
             continue  # 환경 변수 지정
-        if tok.startswith("-") or (wrapped and re.fullmatch(r"\d+[smhd]?|-?\d+", tok)):
-            continue  # 해석기나 감싸는 명령의 옵션, timeout 의 시간, nice 의 값
+        if tok.startswith("-"):
+            skip = tok in VALUE_OPTIONS.get(owner, ())
+            continue  # 해석기나 감싸는 명령의 옵션
+        if wrapped and re.fullmatch(r"-?\d+(\.\d+)?[smhd]?", tok):
+            continue  # timeout 의 시간, nice 의 값
         words.append(tok)
         name = os.path.basename(tok)
         wrapped = bool(WRAPPING.match(name))
         at_command = wrapped or bool(INTERPRETERS.match(name))
+        owner = "python" if name.startswith("python") else name
     return words, tokens
 
 
