@@ -469,6 +469,25 @@ class ReviewChangedTest(ReviewBase):
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("src/a.py", r.stderr)
 
+    def test_크기가_같고_수정_시각만_바뀌어도_받지_않는다(self):
+        # 실제로 난 일은 고쳤다 되돌린 것이다. 내용과 크기는 같고 수정 시각만 다르다
+        commit_file(self.cwd, "src/big.py", lines(20))
+        self.review_files()
+        path = os.path.join(self.cwd, "src", "a.py")
+        st = os.stat(path)
+        os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns + 10**9))
+        r = job(self.cwd, "review", "0", "버그 축만")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("src/a.py", r.stderr)
+
+    def test_추적하던_파일을_지워도_받지_않는다(self):
+        commit_file(self.cwd, "src/big.py", lines(20))
+        self.review_files()
+        os.remove(os.path.join(self.cwd, "src", "b.py"))
+        r = job(self.cwd, "review", "0", "버그 축만")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("src/b.py", r.stderr)
+
     def test_무시하지_않은_새_파일은_보고_리뷰_폴더와_무시한_파일은_보지_않는다(self):
         commit_file(self.cwd, ".gitignore", "build/\n")
         self.review_files()
