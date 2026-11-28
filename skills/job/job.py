@@ -206,12 +206,14 @@ def run(cwd, command):
     return r.returncode, r.stdout
 
 
-LEAD_WORDS = re.compile(r"job\.py\W+(human-done|contrasted|hardened|resume)\b")
+LEAD_COMMANDS = ("human-done", "contrasted", "hardened", "resume")
+LEAD_WORDS = re.compile(r"job\.py\W+(human-done|contrasted|hardened|resume)\b")  # 해석하지 못한 명령에 쓴다
 
 
 def unquoted_pipe(command):
-    """따옴표 밖의 파이프(| 와 |&). || 는 아니다."""
-    quote, i, n = None, 0, len(command)
+    """명령 줄 맨 위의 파이프(| 와 |&). || 와, 따옴표 안·명령 치환($(...), 백틱) 안의 파이프는 아니다. 명령 치환 안의
+    파이프는 그 값만 정하고 명령 줄의 종료 코드를 가리지 않는다."""
+    quote, depth, tick, i, n = None, 0, False, 0, len(command)
     while i < n:
         c = command[i]
         if c == "\\" and quote != "'":
@@ -219,7 +221,15 @@ def unquoted_pipe(command):
             continue
         if c in "'\"" and quote in (None, c):
             quote = None if quote else c
-        elif quote is None and c == "|":
+        elif quote != "'" and command.startswith("$(", i):
+            depth += 1
+            i += 2
+            continue
+        elif quote != "'" and c == ")" and depth:
+            depth -= 1
+        elif quote != "'" and c == "`":
+            tick = not tick
+        elif quote is None and not depth and not tick and c == "|":
             if command.startswith("||", i):
                 i += 2
                 continue
@@ -228,22 +238,49 @@ def unquoted_pipe(command):
     return False
 
 
+OPERATORS = {";", "&", "&&", "|", "||", "|&", "(", ")", "\n"}
+INTERPRETERS = re.compile(r"^(sh|bash|zsh|dash|python\S*|node|ruby|perl|source|\.)$")
+
+
+def command_words(command):
+    """명령 자리에 오는 낱말들: 줄 첫머리와 ; && || | ( 뒤의 첫 낱말, 그리고 sh·python 같은 해석기 뒤의 첫 낱말.
+    환경 변수 지정은 건너뛴다. 해석하지 못하면 None."""
+    try:
+        lex = shlex.shlex(command, posix=True, punctuation_chars=";&|()\n")
+        lex.whitespace = " \t\r"
+        lex.whitespace_split = True
+        tokens = list(lex)
+    except ValueError:
+        return None
+    words, at_command = [], True
+    for tok in tokens:
+        if tok in OPERATORS or set(tok) <= set(";&|()\n"):
+            at_command = True
+            continue
+        if at_command and "=" in tok and not tok.startswith("-"):
+            continue
+        if at_command:
+            words.append(tok)
+            at_command = bool(INTERPRETERS.match(os.path.basename(tok)))
+        elif tok.startswith("-"):
+            continue
+    return words, tokens
+
+
 def refused(cwd, command):
     """log 와 red 가 받지 않는 명령이면 그 이유."""
     if unquoted_pipe(command):
         return ("파이프(| 나 |&)가 든 명령은 마지막 명령의 종료 코드만 남아 앞 명령의 실패를 가린다. 파이프 없이 명령을 "
                 "그대로 준다(출력 전체는 로그 파일에 남는다)")
-    if LEAD_WORDS.search(command):
+    parsed = command_words(command)
+    tokens = parsed[1] if parsed else []
+    if (any(os.path.basename(t) == "job.py" and nxt in LEAD_COMMANDS for t, nxt in zip(tokens, tokens[1:]))
+            if parsed else LEAD_WORDS.search(command)):
         return ("리드나 사람만 남길 기록(human-done, contrasted, hardened, resume)을 log·red 로 감싸 부르지 않는다. "
                 "사람이 확인한 뒤 사람이나 리드가 직접 부른다")
-    top = top_dir(cwd)
-    if under_temp(top):
+    if not parsed or under_temp(top_dir(cwd)):
         return None  # 레포 자신이 임시 폴더 아래면(테스트, 써 보기) 그 안의 스크립트를 부른다
-    try:
-        words = shlex.split(command)
-    except ValueError:
-        return None
-    for w in words:
+    for w in parsed[0]:
         path = os.path.expanduser(w)
         if os.path.isabs(path) and os.path.isfile(path) and under_temp(path):
             return ("레포 밖 OS 임시 폴더의 스크립트(%s)는 지워질 수 있어 증거가 되지 못한다. 레포 안이나 git 폴더 안 "
@@ -781,13 +818,13 @@ def line_counts(cwd, revs, paths):
         return {}  # 줄 수 없이 이름과 표시만 알린다
     wanted = set(paths)
     counts, name = {}, None
-    for line in r.stdout.splitlines():
+    for line in r.stdout.split("\n"):
         if line.startswith("diff --git "):
             name = patch_file(line)
             name = name if name in wanted else None
             if name:
                 counts.setdefault(name, 0)
-        elif name and line[:1] in "+-" and not line.startswith(("+++ ", "--- ")):
+        elif name and line[:1] in ("+", "-") and not line.startswith(("+++ ", "--- ")):
             counts[name] += 1
     return counts
 
@@ -805,7 +842,8 @@ def review_diff(top, base, revs, skip):
     cmd = ["git", *DIFF_CONFIG, "--attr-source=" + base, "diff", *DIFF_OPTIONS, *revs, "--"]
     r = subprocess.run(cmd, cwd=top, capture_output=True, text=True, errors="replace")
     if r.returncode != 0 and "attr-source" in r.stderr:
-        note = "이 git 은 --attr-source 를 몰라(git 2.42 전) diff 를 작업 트리의 .gitattributes 로 만들었다"
+        note = ("이 git 은 --attr-source 를 몰라(git 2.42 전) diff 를 작업 트리의 .gitattributes 로 만들었다. 이 브랜치가 "
+                ".gitattributes 에 더한 -diff·binary 표시로 그 파일의 내용이 bug.patch 에서 숨겨질 수 있다")
         cmd.remove("--attr-source=" + base)
         r = subprocess.run(cmd, cwd=top, capture_output=True, text=True, errors="replace")
     if r.returncode != 0:
@@ -831,8 +869,11 @@ def review_files(cwd, state, base):
     쓰는 것을 막는다. 그래서 워크트리 안에 두되, 안의 .gitignore 가 폴더째 git 에서 빼게 한다.
     명세 리뷰어를 띄울지는 정하지 않는다. 부르는 쪽이 판단하도록 크기와 바뀐 파일만 알린다."""
     top = top_dir(cwd)
-    stat = subprocess.run(["git", "-c", "core.quotePath=false", "diff", "--numstat", base + "...HEAD"], cwd=top,
-                          capture_output=True, text=True)
+    # 줄 수도 base 의 표시로 센다(이 브랜치가 더한 -diff 로 줄 수에서 빠지지 않게). 옛 git 이면 작업 트리의 표시로 센다
+    numstat = ["git", "-c", "core.quotePath=false", "--attr-source=" + base, "diff", "--numstat", base + "...HEAD", "--"]
+    stat = subprocess.run(numstat, cwd=top, capture_output=True, text=True)
+    if stat.returncode != 0 and "attr-source" in stat.stderr:
+        stat = subprocess.run(numstat[:3] + numstat[4:], cwd=top, capture_output=True, text=True)
     if stat.returncode != 0:
         sys.exit("base 와의 diff 를 만들지 못했다: " + stat.stderr.strip())
     rows = [row.split("\t", 2) for row in stat.stdout.splitlines()]
@@ -867,8 +908,8 @@ def review_files(cwd, state, base):
             path = os.path.join(".fade-review", "parts", "%02d.patch" % i)
             with open(os.path.join(top, path), "w", encoding="utf-8") as f:
                 f.write(text)
-            parts.append({"path": path, "lines": len(text.splitlines()),
-                          "files": [patch_file(l) for l in text.splitlines() if l.startswith("diff --git ")]})
+            parts.append({"path": path, "lines": text.count("\n"),
+                          "files": [patch_file(l) for l in text.split("\n") if l.startswith("diff --git ")]})
     texts = [p for p in skip if "binary" not in skip[p]]  # binary 는 줄로 셀 수 없다
     counts = line_counts(top, [base + "...HEAD"], texts)
     counts = dict(line_counts(top, bug_range, [p for p in texts if p not in counts]), **counts)
@@ -883,7 +924,7 @@ def review_files(cwd, state, base):
     print("base 와의 diff: 파일 %d개, 더한 줄 %d + 뺀 줄 %d = %d줄" % (len(rows), added, removed, added + removed))
     print("diff.patch: " + ("고친 부분만(명세 리뷰어가 본 %s 뒤의 diff)" % short(since) if since else "전체(base 와의 diff)"))
     print("\n".join(stat.stdout.splitlines()))
-    print("bug.patch: %d줄, %d자 (%s)" % (len(bug.splitlines()), len(bug),
+    print("bug.patch: %d줄, %d자 (%s)" % (bug.count("\n"), len(bug),
                                        "앞 리뷰가 본 %s 뒤" % short(last) if last else "base 와의 전체"))
     if skip:
         print("리뷰에서 뺀 파일(base 의 .gitattributes 표시) %d개: %s"

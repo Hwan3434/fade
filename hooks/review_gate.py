@@ -77,10 +77,17 @@ def result_text(part):
     return str(content or "")
 
 
+def lines_of(text):
+    """줄바꿈(\n)으로만 나눈 줄들. 끝의 빈 줄 하나는 뺀다."""
+    lines = text.split("\n")
+    return lines[:-1] if lines and lines[-1] == "" else lines
+
+
 def outputs_of(part):
     """도구 출력 하나를 견줄 꼴들. Read 결과처럼 모든 줄에 번호 머리(「12\t」)가 있으면 (번호, 줄) 목록 하나로, 아니면 줄
     목록 하나로 낸다. 번호가 있으면 그 번호로 자리를 잡는다(짧은 출력이 같은 글자의 다른 자리에 맞지 않게)."""
-    raw = [line.rstrip() for line in result_text(part).splitlines()]
+    # Read 는 \n 으로만 줄을 센다. splitlines 는 \x0c, U+2028 에서도 잘라 자리가 어긋난다
+    raw = [line.rstrip() for line in lines_of(result_text(part))]
     marks = [READ_PREFIX.match(line) for line in raw]
     # 줄 안의 \x0c 같은 글자로 줄이 쪼개지면 번호 없는 줄이 섞인다. 대부분 번호가 있으면 Read 결과로 본다
     if raw and sum(1 for m in marks if m) >= 0.9 * len(raw):
@@ -111,12 +118,14 @@ def placed(patch, numbered):
     """번호가 붙은 출력(Read)이 덮은 bug.patch 의 줄 번호들. 조각 파일을 읽으면 번호가 조각 안의 번호라, 번호와 bug.patch
     의 줄이 가장 많이 맞는 어긋남(0 이 먼저)을 고른다."""
     first = numbered[0][1]
-    shifts = [0] + [i - (numbered[0][0] - 1) for i, t in enumerate(patch) if t == first][:200]
+    shifts = [0] + [i - (numbered[0][0] - 1) for i, t in enumerate(patch) if t == first]
     best = set()
     for d in shifts:
         hit = {n + d for n, text in numbered if 0 <= n - 1 + d < len(patch) and patch[n - 1 + d] == text}
         if len(hit) > len(best):
             best = hit
+            if len(best) == len(numbered):
+                break
     return best
 
 
@@ -124,12 +133,22 @@ def covered(lines, outputs):
     """출력들이 덮은 bug.patch 의 줄 번호들. 번호가 붙은 출력은 그 번호로, 아니면 bug.patch 와 줄 순서째 맞춰 맞은 자리만
     친다. 그래서 같은 앞부분을 두 번 읽거나, 끝 줄이 앞줄과 같은 글자여도 그 자리를 읽지 않았으면 덮인 것이 아니다."""
     patch, got = [line.rstrip() for line in lines], set()
-    for out in outputs:
-        if out and isinstance(out[0], tuple):
-            got |= placed(patch, out)
-            continue
-        for a, _, size in difflib.SequenceMatcher(None, patch, out, autojunk=False).get_matching_blocks():
-            got.update(range(a + 1, a + size + 1))
+    numbered = [out for out in outputs if out and isinstance(out[0], tuple)]
+    for out in numbered:
+        got |= placed(patch, out)
+    # 번호 없는 출력은 긴 것부터 맞추고, 맞은 덩어리가 이미 덮인 자리면 같은 글자의 덮이지 않은 다른 자리로 옮긴다
+    # (앞 14줄과 끝 2줄을 따로 읽었는데 끝 2줄이 앞쪽의 같은 줄에 맞는 일)
+    for out in sorted((o for o in outputs if not (o and isinstance(o[0], tuple))), key=len, reverse=True):
+        for a, b, size in difflib.SequenceMatcher(None, patch, out, autojunk=False).get_matching_blocks():
+            if not size:
+                continue
+            spot = range(a + 1, a + size + 1)
+            if set(spot) <= got:
+                block = out[b:b + size]
+                other = next((k for k in range(len(patch) - size + 1) if patch[k:k + size] == block
+                              and not set(range(k + 1, k + size + 1)) <= got), None)
+                spot = range(other + 1, other + size + 1) if other is not None else spot
+            got.update(spot)
     return got
 
 
@@ -166,8 +185,8 @@ def review_problem(state, wt, transcript):
     patch = os.path.join(job.top_dir(wt), ".fade-review", "bug.patch")
     if not os.path.isfile(patch):
         raise Unjudged("bug.patch 가 없다. review-files 를 돌린 job.py 가 이 훅과 다른 판일 수 있다(PATH 의 job.py)")
-    with open(patch, encoding="utf-8", errors="replace") as f:
-        lines = f.read().splitlines()
+    with open(patch, encoding="utf-8", errors="replace", newline="") as f:
+        lines = lines_of(f.read())
     wanted = {i + 1: line.rstrip() for i, line in enumerate(lines) if len(line.strip()) >= 2 and not BINARY.match(line)}
     if not wanted and made.get("emptied"):
         return None  # 바뀐 파일이 모두 레포가 읽을 대상이 아니라고 표시한 것이라 읽을 줄이 없다

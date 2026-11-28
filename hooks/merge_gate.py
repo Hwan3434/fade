@@ -33,7 +33,8 @@ SHOW = {v: k for k, v in HIDE.items()}
 def without_heredoc_bodies(command):
     """heredoc 본문 줄과 끝 줄을 뺀다. 파일에 쓰는 글이 명령으로 읽히지 않게 한다. 명령 줄 전체를 한 번 훑으며 따옴표,
     명령 치환($(...)), 산술($((...)), ((...)))의 안팎을 줄을 넘어 따라간다. 그래서 큰따옴표 안의 << 는 heredoc 이
-    아니지만, 큰따옴표 안 명령 치환("$(cat <<'EOF' ... EOF )")의 << 는 heredoc 이다. 주석 안은 보지 않는다."""
+    아니지만, 큰따옴표 안 명령 치환("$(cat <<'EOF' ... EOF )", 백틱)의 << 는 heredoc 이다. $'...' 의 \' 는 따옴표를
+    닫지 않는다. 끝 글 뒤에 ) 가 붙은 끝 줄(EOF)")도 끝 줄이다. 주석 안은 보지 않는다."""
     command = command.replace("\\\n", " ")
     out, stack, pending, i, n = [], [], [], 0, len(command)
     while i < n:
@@ -51,6 +52,8 @@ def without_heredoc_bodies(command):
         if top == '"':
             if c == '"':
                 stack.pop()
+            elif c == "`":
+                stack.append("`")
             elif command.startswith("$(", i) and not command.startswith("$((", i):
                 stack.append("$(")
                 out.append("$(")
@@ -66,8 +69,13 @@ def without_heredoc_bodies(command):
                 while i < n:
                     j = command.find("\n", i)
                     j = n if j < 0 else j
-                    line, i = command[i:j], min(j + 1, n)
-                    if (line.lstrip("\t") if strip_tabs else line).strip() == end:
+                    start, line = i, command[i:j]
+                    i = min(j + 1, n)
+                    body = line.lstrip("\t") if strip_tabs else line
+                    if body.strip() == end:
+                        break
+                    if body.startswith(end) and body[len(end):].lstrip().startswith(")"):
+                        i = start + (len(line) - len(body)) + len(end)  # EOF)" : 끝 글 뒤의 ) 부터 다시 읽는다
                         break
             pending = []
             continue
@@ -81,8 +89,20 @@ def without_heredoc_bodies(command):
             out.append(command[i:k])
             i = k
             continue
+        if command.startswith("$'", i):  # $'...' 안의 \' 는 따옴표를 닫지 않는다
+            j = i + 2
+            while j < n and command[j] != "'":
+                j += 2 if command[j] == "\\" else 1
+            out.append(command[i:j + 1])
+            i = j + 1
+            continue
         if c in "'\"":
             stack.append(c)
+        elif c == "`":
+            if top == "`":
+                stack.pop()
+            else:
+                stack.append("`")
         elif command.startswith("$(", i):
             stack.append("$(")
             out.append("$(")
@@ -251,12 +271,16 @@ def unwrapped(seg):
     return seg
 
 
-def expand_home(value, home=None):
-    """`~`, `$HOME`, `${HOME}` 로 시작하는 경로의 그 머리를 홈으로 펼친다. 세 훅이 같은 것을 쓴다."""
+def expand_home(value, home=None, cwd=None):
+    """`~`, `$HOME`, `${HOME}` 로 시작하는 경로의 그 머리를 홈으로, cwd 를 알면 `$PWD`, `${PWD}`, `$(pwd)`, `` `pwd` `` 를
+    그 폴더로 펼친다. 세 훅이 같은 것을 쓴다. 그 밖의 셸 변수는 펼치지 않는다."""
     home = home or os.path.expanduser("~")
     for var in ("${HOME}", "$HOME", "~"):
         if value == var or value.startswith(var + "/"):
             return home + value[len(var):]
+    for var in ("${PWD}", "$PWD", "$(pwd)", "`pwd`"):
+        if cwd and (value == var or value.startswith(var + "/")):
+            return cwd + value[len(var):]
     return value
 
 
@@ -285,7 +309,7 @@ def transcript_files(transcript):
 def folder(base, value, lexical=False):
     """cd 나 git -C 의 값으로 간 폴더. 셸 변수처럼 펼칠 수 없거나 없는 폴더면 None(알 수 없음)이다.
     lexical 이면 없는 폴더도 글자 그대로의 경로로 푼다(같은 줄에서 mkdir 한 폴더). `$HOME`, `${HOME}` 은 홈으로 펼친다."""
-    value = expand_home(value)
+    value = expand_home(value, cwd=base)
     if "$" in value or "`" in value or (base is None and not os.path.isabs(os.path.expanduser(value))):
         return None
     path = os.path.normpath(os.path.join(base or "/", os.path.expanduser(value)))

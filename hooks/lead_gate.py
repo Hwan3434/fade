@@ -104,7 +104,8 @@ def worktrees_under(path):
     real = os.path.realpath(path)
     found = set()
     # git 관리 폴더: .git/worktrees/<이름>, .git/worktrees, .git
-    for admin in [real] + glob.glob(os.path.join(real, "*")) + glob.glob(os.path.join(real, "worktrees", "*")):
+    for admin in ([real] + glob.glob(os.path.join(real, "*")) + glob.glob(os.path.join(real, "worktrees", "*"))
+                  + glob.glob(os.path.join(real, ".git", "worktrees", "*"))):  # 메인 체크아웃째 지우면 그 관리 폴더도 사라진다
         wt = admin_worktree(admin)
         if wt:
             found.add(wt)
@@ -132,7 +133,7 @@ def worktrees_under(path):
 def expanded(here, target):
     """rm 의 대상 하나를 셸처럼 펼친 경로들: 홈($HOME, ~), 중괄호({a,b}), 글롭(*, ?, [...]). 끝 이름이 글롭뿐이면
     (dir/*, dir/.*) 그 폴더째로 보고, 이름이 붙은 글롭은 맞는 것들로 펼친다(맞는 것이 없으면 지우는 것이 없다)."""
-    target = merge_gate.expand_home(target)
+    target = merge_gate.expand_home(target, cwd=here)
     if here is None and not os.path.isabs(target):
         return []
     m = re.search(r"\{([^{}]*,[^{}]*)\}", target)
