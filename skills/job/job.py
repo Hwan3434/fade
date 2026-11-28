@@ -58,7 +58,7 @@ FADE_MISTAKES 를 정하지 않은 동안 쓰지 않는다. PR 을 기록하면 
                                          계획서 원문은 부르는 쪽이 plan.md 로 쓴다. 레포가 .gitattributes 에 linguist-generated,
                                          -diff, binary 로 표시한 파일은 두 diff 에서 빼고 이름과 줄 수를 알린다. 표시는
                                          base 의 .gitattributes 에서만 읽는다(이 브랜치가 더한 표시는 병합 뒤부터 듣는다). bug.patch 가
-                                         20000자를 넘으면 파일 경계에서 나눈 조각을 .fade-review/parts/ 에도 쓴다
+                                         20000바이트를 넘으면 파일 경계에서 나눈 조각을 .fade-review/parts/ 에도 쓴다
   job.py review  <남은 막는 지적 수> [<요약>] [--spec | --minor] [--dropped=<수>]
                                          코드 리뷰 결과. 지금 커밋에서 남은 막는 지적이 0 이어야 병합한다.
                                          앞 리뷰보다 수가 줄었으면 그 사이 slip 이나 새 red 가 있어야 받는다. 오탐이나
@@ -807,7 +807,9 @@ def show(state, cwd, full=False):
     return mask("\n".join(lines))
 
 
-PART_CHARS = 20000  # bug.patch 를 조각으로 나누는 크기. Bash 도구가 출력을 통째로 보여 주는 한도(약 30000자) 아래다
+# bug.patch 를 조각으로 나누는 크기(UTF-8 바이트). Bash 도구가 출력을 통째로 보여 주는 한도(약 30000바이트) 아래다.
+# 한도는 글자가 아니라 바이트라, 한글이 많으면 글자로 재서는 넘는다
+PART_BYTES = 20000
 
 
 def changed(cwd, *revs):
@@ -893,10 +895,10 @@ def review_diff(top, base, revs, skip):
 
 
 def split_patch(text):
-    """bug.patch 를 파일 경계에서 나눠 조각마다 PART_CHARS 를 넘지 않게 묶는다. 한 파일이 그보다 크면 그 파일 하나가 한 조각이다."""
+    """bug.patch 를 파일 경계에서 나눠 조각마다 PART_BYTES 를 넘지 않게 묶는다. 한 파일이 그보다 크면 그 파일 하나가 한 조각이다."""
     files, parts = re.split(r"(?m)^(?=diff --git )", text), []
     for chunk in (f for f in files if f):
-        if parts and len(parts[-1]) + len(chunk) <= PART_CHARS:
+        if parts and len((parts[-1] + chunk).encode("utf-8")) <= PART_BYTES:
             parts[-1] += chunk
         else:
             parts.append(chunk)
@@ -941,7 +943,7 @@ def review_files(cwd, state, base):
     os.makedirs(folder, exist_ok=True)
     shutil.rmtree(os.path.join(folder, "parts"), ignore_errors=True)
     parts = []
-    if len(bug) > PART_CHARS:
+    if len(bug.encode("utf-8")) > PART_BYTES:
         os.makedirs(os.path.join(folder, "parts"))
         for i, text in enumerate(split_patch(bug), 1):
             path = os.path.join(".fade-review", "parts", "%02d.patch" % i)
@@ -964,7 +966,7 @@ def review_files(cwd, state, base):
     print("base 와의 diff: 파일 %d개, 더한 줄 %d + 뺀 줄 %d = %d줄" % (len(rows), added, removed, added + removed))
     print("diff.patch: " + ("고친 부분만(명세 리뷰어가 본 %s 뒤의 diff)" % short(since) if since else "전체(base 와의 diff)"))
     print(stat.stdout.rstrip("\n"))
-    print("bug.patch: %d줄, %d자 (%s)" % (bug.count("\n"), len(bug),
+    print("bug.patch: %d줄, %d바이트 (%s)" % (bug.count("\n"), len(bug.encode("utf-8")),
                                        "앞 리뷰가 본 %s 뒤" % short(last) if last else "base 와의 전체"))
     if skip:
         print("리뷰에서 뺀 파일(base 의 .gitattributes 표시) %d개: %s"
@@ -981,8 +983,8 @@ def review_files(cwd, state, base):
         print("bug.patch 가 비었다: 바뀐 파일이 모두 읽을 대상이 아니라고 표시돼 있다. 버그 축은 읽을 것이 없으니 "
               "code-review 를 부르지 않고 그 사실을 리뷰 요약에 적어 남긴다. 명세 리뷰어는 diff.patch 로 본다")
     if parts:
-        print("bug.patch 가 %d자를 넘어 파일 단위 조각 %d개로도 썼다. 조각마다 code-review 를 부른다(`medium <조각 경로>`):"
-              % (PART_CHARS, len(parts)))
+        print("bug.patch 가 %d바이트를 넘어 파일 단위 조각 %d개로도 썼다. 조각마다 code-review 를 부른다(`medium <조각 경로>`):"
+              % (PART_BYTES, len(parts)))
         for p in parts:
             print("  %s: %d줄, %s" % (p["path"], p["lines"], ", ".join(p["files"])))
     return folder
