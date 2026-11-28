@@ -246,13 +246,15 @@ def unquoted_pipe(command):
 
 OPERATORS = {";", "&", "&&", "|", "||", "|&", "(", ")", "\n"}
 INTERPRETERS = re.compile(r"^(sh|bash|zsh|dash|python\S*|node|ruby|perl|source|\.)$")
-# 명령을 감싸는 명령: 그 옵션(과 timeout 의 시간, nice 의 값)을 건너뛴 다음 낱말이 명령 자리다
-WRAPPING = re.compile(r"^(timeout|env|nice|nohup|sudo|time|command|exec|stdbuf|ionice|xargs)$")
+# 명령을 감싸는 명령과 그 옵션 가운데 값을 따로 받는 것. 옵션(과 timeout 의 시간, nice 의 값)을 건너뛴 다음 낱말이
+# 명령 자리다. 병합 훅도 이 표를 읽는다(삭제 훅과 리드 훅은 병합 훅의 해석을 쓴다)
+WRAPPERS = {"sudo": {"-u", "-g", "-p", "-C", "-D", "-h", "-R", "-T", "-U", "-r", "-t", "--user", "--group"},
+            "env": {"-u", "-C", "-S", "--unset", "--chdir", "--split-string"}, "command": set(), "exec": {"-a"},
+            "nohup": set(), "time": {"-f", "-o", "--format", "--output"}, "nice": {"-n", "--adjustment"},
+            "timeout": {"-s", "-k", "--signal", "--kill-after"}, "ionice": {"-c", "-n", "-p"}, "stdbuf": {"-i", "-o", "-e"},
+            "xargs": {"-n", "-I", "-L", "-P", "-d", "-s", "-E"}}
 # 감싸는 명령과 해석기의 옵션 가운데 값을 따로 받는 것. 그 값은 명령 낱말이 아니다
-VALUE_OPTIONS = {"sudo": {"-u", "-g", "-p", "-C", "-D", "-h", "-R", "-T", "-U", "-r", "-t"}, "env": {"-u", "-C", "-S"},
-                 "nice": {"-n"}, "timeout": {"-s", "-k"}, "time": {"-f", "-o"}, "stdbuf": {"-i", "-o", "-e"},
-                 "ionice": {"-c", "-n", "-p"}, "xargs": {"-n", "-I", "-L", "-P", "-d", "-s", "-E"}, "exec": {"-a"},
-                 "sh": {"-o", "-O"}, "bash": {"-o", "-O"}, "zsh": {"-o"}, "dash": {"-o"}, "python": {"-W", "-X"}}
+VALUE_OPTIONS = dict(WRAPPERS, sh={"-o", "-O"}, bash={"-o", "-O"}, zsh={"-o"}, dash={"-o"}, python={"-W", "-X"})
 
 
 def command_words(command):
@@ -284,7 +286,7 @@ def command_words(command):
             continue  # timeout 의 시간, nice 의 값
         words.append(tok)
         name = os.path.basename(tok)
-        wrapped = bool(WRAPPING.match(name))
+        wrapped = name in WRAPPERS
         at_command = wrapped or bool(INTERPRETERS.match(name))
         owner = "python" if name.startswith("python") else name
     return words, tokens

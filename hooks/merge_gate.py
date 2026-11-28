@@ -242,11 +242,8 @@ GIT_VALUE_OPTIONS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace"}
 PUSH_VALUE_OPTIONS = {"-o", "--push-option", "--repo", "--receive-pack", "--exec"}
 MERGE_VALUE_OPTIONS = {"-m", "-F", "-s", "-X", "--strategy", "--strategy-option", "--file"}
 RESERVED = {"!", "{", "if", "then", "elif", "else", "while", "until", "do"}
-# 명령을 감싸는 명령과 그 옵션 가운데 값을 받는 것. timeout 은 옵션 뒤에 시간 하나를 더 받는다
-WRAPPERS = {"sudo": {"-u", "-g", "-p", "-C", "-D", "-h", "-R", "-T", "-U", "-r", "-t", "--user", "--group"},
-            "env": {"-u", "-C", "-S", "--unset", "--chdir", "--split-string"}, "command": set(), "exec": {"-a"},
-            "nohup": set(), "time": {"-f", "-o", "--format", "--output"}, "nice": {"-n", "--adjustment"},
-            "timeout": {"-s", "-k", "--signal", "--kill-after"}, "ionice": {"-c", "-n", "-p"}, "stdbuf": {"-i", "-o", "-e"}}
+# 명령을 감싸는 명령과 그 옵션 가운데 값을 받는 것. job.py 의 log·red 와 같은 표다. timeout 은 옵션 뒤에 시간 하나를 더 받는다
+WRAPPERS = job.WRAPPERS
 WRAPPER_ARGS = {"timeout": 1}
 
 
