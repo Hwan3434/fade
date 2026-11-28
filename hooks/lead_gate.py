@@ -3,7 +3,7 @@
 
 막는 것은 둘이다.
 - 사람 없는 작업(`job.py start --unattended`)을 돈 세션이 그 작업의 `job.py human-done`(사람이 볼 것 풀기),
-  `contrasted`(리드의 대조), `hardened`(hardener 결과)를 남기는 것. 사람이 볼 것을 그 작업이 스스로 풀면 human 이
+  `contrasted`(리드의 대조), `hardened`(hardener 결과), `resume`(멈춤 풀기)을 남기는 것. 사람이 볼 것을 그 작업이 스스로 풀면 human 이
   뜻이 없다. 사람이 터미널에서 치거나, 사람이 맡긴 리드(다른 세션)가 한다.
 - 병합된 워커의 워크트리를 리드의 대조와 hardener 기록 없이 지우는 것(`git worktree remove`, 워크트리나 그것을 담은
   폴더째의 `rm -r`). 지금 세션이 그 작업을 시작했고 dispatch 의 워커가 아니면(nonstop, 사용자가 이 세션에서 맡긴 job)
@@ -28,7 +28,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import merge_gate  # noqa: E402
 from merge_gate import job  # noqa: E402
 
-LEAD_ONLY = ("human-done", "contrasted", "hardened")
+LEAD_ONLY = ("human-done", "contrasted", "hardened", "resume")
 DISPATCHED = "fade:job 스킬로 아래 계획서를 수행한다"  # dispatch 가 워커에 주는 첫 지시문의 머리
 
 

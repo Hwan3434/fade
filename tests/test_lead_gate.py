@@ -81,7 +81,8 @@ class LeadOnlyTest(Base):
         for command in ('cd %s && job.py human-done 1 "화면을 봤다"' % self.wt,
                         'cd %s && job.py contrasted "기준 셋 모두 맞음"' % self.wt,
                         'cd %s && job.py hardened "제안 없음"' % self.wt,
-                        'cd %s >/dev/null && python3 /x/skills/job/job.py human-done 1 "봤다"' % self.wt):
+                        'cd %s >/dev/null && python3 /x/skills/job/job.py human-done 1 "봤다"' % self.wt,
+                        'cd %s && job.py resume "승인을 받았다"' % self.wt):
             reason = self.gate(command, own)
             self.assertIsNotNone(reason, command)
             self.assertIn("스스로", reason)
