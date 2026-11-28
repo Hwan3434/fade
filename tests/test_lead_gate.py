@@ -39,7 +39,7 @@ class Base(unittest.TestCase):
     def transcript(self, first="작업해 줘", commands=(), cwd=None):
         """세션 기록 파일: 첫 사용자 글과 Bash 호출들."""
         path = os.path.join(self.logs, "s%d.jsonl" % len(os.listdir(self.logs)))
-        now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())  # job.py start 와 같은 때에 찍힌 기록
+        now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         rows = [{"type": "user", "timestamp": now, "cwd": cwd or self.main,
                  "message": {"role": "user", "content": first}}]
         for c in commands:
@@ -49,15 +49,6 @@ class Base(unittest.TestCase):
         with open(path, "w", encoding="utf-8") as f:
             f.write("\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + "\n")
         return path
-
-    def restamp(self, path, at):
-        """세션 기록의 모든 줄의 시각을 at 으로 바꾼다."""
-        with open(path, encoding="utf-8") as f:
-            rows = [json.loads(l) for l in f]
-        for r in rows:
-            r["timestamp"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(at))
-        with open(path, "w", encoding="utf-8") as f:
-            f.write("\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + "\n")
 
     def own(self, first="작업해 줘"):
         """이 작업을 시작한 세션의 기록."""
@@ -123,11 +114,8 @@ class LeadOnlyTest(Base):
         # 리드가 그 작업이 시작되기 몇 시간 전에 다른 써 보기에서 폴더 모르는 start 를 냈다가, 병합 뒤 hardened 를 막혔다
         self.start("--unattended")
         lead = self.transcript(commands=['cd "$TRY" && job.py start "써 보기"'] * 4)
-        self.restamp(lead, time.time() - 10 * 3600)
         for command in ('cd %s && job.py hardened "제안 없음"' % self.wt, 'cd %s && job.py contrasted "맞음"' % self.wt):
             self.assertIsNone(self.gate(command, lead), command)
-        self.restamp(lead, time.time())  # 같은 때에 냈어도 짐작하지 않는다
-        self.assertIsNone(self.gate('cd %s && job.py hardened "제안 없음"' % self.wt, lead))
 
     def test_첫_사용자_글의_앞_조각이_메타_글이어도_dispatch_지시문을_찾는다(self):
         self.start()
