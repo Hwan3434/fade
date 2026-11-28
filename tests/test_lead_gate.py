@@ -252,6 +252,18 @@ class RemoveTest(Base):
         for command in commands:
             self.assertIsNotNone(self.gate(command, lead), command)
 
+    def test_끝_이름이_글롭뿐인_지우기는_그_폴더째로_본다(self):
+        self.merged()
+        lead = self.transcript()
+        for command in ("rm -rf .claude/worktrees/x/.*", "rm -rf .claude/worktrees/x/*", "cd %s && rm -rf ./*" % self.wt):
+            self.assertIsNotNone(self.gate(command, lead), command)
+        self.assertIsNone(self.gate("cd %s && rm -rf *.log" % self.wt, lead))  # 맞는 것이 없는 이름 붙은 글롭은 아무것도 안 지운다
+
+    def test_레포들을_담은_폴더_지우기도_그_레포들의_워크트리를_본다(self):
+        self.merged()
+        holder = os.path.dirname(self.main)  # 레포(메인 체크아웃)를 담은 git 아닌 폴더
+        self.assertIsNotNone(self.gate("rm -rf " + holder, self.transcript()))
+
     def test_레포_밖_워크트리를_담은_git_아닌_폴더_지우기도_본다(self):
         outside = tempfile.TemporaryDirectory()
         self.addCleanup(outside.cleanup)

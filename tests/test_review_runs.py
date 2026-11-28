@@ -208,6 +208,11 @@ class GateTest(unittest.TestCase):
                         "transcript_path": self.t.path, "tool_input": {"command": "job.py review 0 \"x\""}})
         self.assertIn("머리 글", out.get("systemMessage", ""))
 
+    def test_따옴표로_감싼_job_py_경로의_review_도_해석하지_못하면_알린다(self):
+        self.passed_with_note({"hook_event_name": "PreToolUse", "tool_name": "Bash", "cwd": self.cwd,
+                               "transcript_path": self.t.path, "tool_input": {
+                                   "command": 'python3 "${CLAUDE_SKILL_DIR}/job.py" review "x'}}, "판정하지 못했다")
+
     def test_해석하지_못해도_job_py_review_를_부르지_않는_명령에는_조용하다(self):
         for command in ('grep -rn "job.py review README.md', "echo 'job.py review-files 를 쓴다"):
             payload = {"hook_event_name": "PreToolUse", "tool_name": "Bash", "cwd": self.cwd,
@@ -640,6 +645,35 @@ class ReviewFilesTest(unittest.TestCase):
         self.assertIn("+b = 1", bug)
         self.assertIn("+c = 2", bug)
         self.assertIn("+b = 1", spec)
+
+    def test_표시된_폴더로_옮기거나_빼낸_파일의_변경도_리뷰에_든다(self):
+        # 이름 바꿈으로 읽으면 새 경로만 보고 걸러, 옮긴 파일의 지움이나 새 내용이 리뷰에서 빠진다
+        subprocess.run(["git", "switch", "-q", "main"], cwd=self.cwd, check=True)
+        commit_file(self.cwd, ".gitattributes", "gen/** linguist-generated\n", "표시")
+        commit_file(self.cwd, "gen/old.py", "".join("g%d = %d\n" % (i, i) for i in range(30)), "생성")
+        subprocess.run(["git", "switch", "-q", "feat/x"], cwd=self.cwd, check=True)
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid", "merge", "-q", "--no-edit",
+                        "main"], cwd=self.cwd, check=True)
+        commit_file(self.cwd, "src/x.py", "".join("s%d = %d\n" % (i, i) for i in range(30)), "소스")
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid", "merge", "-q", "--no-edit",
+                        "main"], cwd=self.cwd, check=True)
+        git = ["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid"]
+        subprocess.run(["git", "mv", "src/x.py", "gen/x.py"], cwd=self.cwd, check=True)
+        subprocess.run(["git", "mv", "gen/old.py", "src/old.py"], cwd=self.cwd, check=True)
+        subprocess.run(git + ["commit", "-q", "-m", "옮김"], cwd=self.cwd, check=True)
+        r = job(self.cwd, "review-files", "main")
+        with open(os.path.join(self.cwd, ".fade-review", "bug.patch"), encoding="utf-8") as f:
+            bug = f.read()
+        self.assertIn("-s29 = 29", bug)  # 표시된 폴더로 옮긴 소스의 지움
+        self.assertIn("+g29 = 29", bug)  # 표시된 폴더에서 빼낸 파일의 새 내용
+        self.assertNotIn("bug.patch 가 비었다", r.stdout)
+
+    def test_diff_접두어_설정과_HEAD_라는_파일에_흔들리지_않는다(self):
+        subprocess.run(["git", "config", "diff.noprefix", "true"], cwd=self.cwd, check=True)
+        out, bug, _ = self.files("gen_txt linguist-generated\n".replace("_", "."), gen_txt="1\n", HEAD="x\n", b_py="b = 1\n")
+        self.assertNotIn("gen.txt", bug)
+        self.assertIn("gen.txt(1줄, linguist-generated)", out)
+        self.assertIn("+b = 1", bug)
 
     def test_한글_이름_파일도_뺀_줄_수와_조각_목록이_바로_나온다(self):
         out, bug, _ = self.files("한글_생성.txt linguist-generated\n".replace("_생성", "생성"), **{"한글생성_txt": "1\n2\n"})
