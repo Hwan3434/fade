@@ -494,14 +494,14 @@ class GateTest(unittest.TestCase):
         self.assertIsNone(self.gate("job.py review-files main"))
         self.assertIsNone(self.gate("job.py show"))
 
-    def raw(self, payload):
-        r = hook(REVIEW_GATE, json.dumps(payload))
+    def raw(self, payload, crash=False):
+        r = hook(REVIEW_GATE, json.dumps(payload), crash=crash)
         self.assertEqual(r.returncode, 0, r.stderr)
         return json.loads(r.stdout) if r.stdout.strip() else {}
 
-    def passed_with_note(self, payload, word):
+    def passed_with_note(self, payload, word, crash=False):
         """판정할 수 없으면 막지 않되, 그 사실과 이유가 에이전트와 사용자에게 보인다."""
-        out = self.raw(payload)
+        out = self.raw(payload, crash)
         self.assertNotIn("permissionDecision", out.get("hookSpecificOutput", {}))
         self.assertIn(word, out.get("hookSpecificOutput", {}).get("additionalContext", ""))
         self.assertIn(word, out.get("systemMessage", ""))
@@ -521,9 +521,11 @@ class GateTest(unittest.TestCase):
             f.write("{}\n")
         os.chmod(self.t.path, 0)  # 세션 기록을 읽지 못한다
         self.addCleanup(os.chmod, self.t.path, 0o644)
-        self.passed_with_note({"hook_event_name": "PreToolUse", "tool_name": "Bash", "cwd": self.cwd,
-                               "transcript_path": self.t.path, "tool_input": {"command": "job.py review 0 \"x\""}},
-                              "판정하지 못했다")
+        payload = {"hook_event_name": "PreToolUse", "tool_name": "Bash", "cwd": self.cwd,
+                   "transcript_path": self.t.path, "tool_input": {"command": "job.py review 0 \"x\""}}
+        with self.assertRaises(AssertionError):  # 다른 훅처럼 stderr 에도 죽었다고 남겨 테스트가 죽음을 잡는다
+            hook(REVIEW_GATE, json.dumps(payload))
+        self.passed_with_note(payload, "판정하지 못했다", crash=True)
 
     def test_막은_뒤_실수_기록이_실패해도_JSON_은_하나다(self):
         self.t.prompt(MARKER)
