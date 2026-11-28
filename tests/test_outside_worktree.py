@@ -2,11 +2,10 @@
 import json
 import os
 import subprocess
-import sys
 import tempfile
 import unittest
 
-from helpers import GATE, PERMISSION, commit_file, git_repo, job
+from helpers import GATE, PERMISSION, commit_file, git_repo, hook, job
 from test_gaps import fake_gh
 
 
@@ -30,8 +29,7 @@ class OutsideWorktreeTest(unittest.TestCase):
         head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=self.wt, capture_output=True, text=True).stdout.strip()
         fake_gh(self.bin.name, "feat/x", head=head)
         env = dict(os.environ, PATH=self.bin.name + os.pathsep + os.environ["PATH"])
-        r = subprocess.run([sys.executable, script], input=json.dumps(payload), capture_output=True, text=True, env=env)
-        self.assertEqual(r.returncode, 0, r.stderr)
+        r = hook(script, json.dumps(payload), env=env)
         return json.loads(r.stdout)["hookSpecificOutput"] if r.stdout.strip() else None
 
     def test_메인_체크아웃의_gh_pr_merge_가_레포_밖_워크트리의_기록을_본다(self):
