@@ -209,10 +209,11 @@ def segments(command):
     return [seg for seg, _ in joined(command)]
 
 
-def joined(command):
+def joined(command, assigned=None):
     """명령 줄을 실제로 실행될 단순 명령 조각(토큰 목록)과 그 뒤를 잇는 글자의 짝들로 나눈다. 앞에 붙은 환경 변수 지정과 리다이렉트(그 대상까지)는
     뗀다. 인용된 글자, heredoc 본문, 주석은 명령으로 치지 않는다. 해석하지 못하면 ValueError.
-    shlex 가 못 읽는 bash 의 $'...' 는 빈 따옴표로 바꿔 읽는다. 인용된 글자라 명령으로 치지 않는 것은 같다."""
+    shlex 가 못 읽는 bash 의 $'...' 는 빈 따옴표로 바꿔 읽는다. 인용된 글자라 명령으로 치지 않는 것은 같다.
+    assigned 목록을 주면 변수 지정만 있는 조각(`D=/경로;`)을 (그 뒤에 올 조각의 번호, 이름, 값)으로 담는다."""
     # 리다이렉트에 붙은 fd 번호(2>, 1>&2)를 뗀다. shlex 는 「3 >」과 「3>」을 같은 낱말로 나눠, 나눈 뒤에는
     # 띄어 쓴 인자(gh pr merge 3 >/dev/null 의 PR 번호)와 가를 수 없다
     command = re.sub(r"(?<![\w$\"'/.~-])\d+(?=[<>])", "", without_heredoc_bodies(command))
@@ -224,8 +225,12 @@ def joined(command):
     segment, found, skip = [], [], False
     for tok in list(lex) + [";"]:
         if tok and set(tok) <= CONTROL:
+            alone = []
             while segment and "=" in segment[0] and not segment[0].startswith("-"):
+                alone.append(segment[0].split("=", 1))
                 segment = segment[1:]
+            if not segment and assigned is not None:  # 명령 앞에 붙은 지정(D=x cmd)은 그 명령에만 듣는다
+                assigned += [(len(found), name, value) for name, value in alone]
             if segment:
                 found.append((segment, tok))  # 조각과 그 뒤를 잇는 글자(&&, ;, ||, 줄바꿈 등)
             segment, skip = [], False
@@ -283,6 +288,11 @@ def expand_home(value, home=None, cwd=None):
     return value
 
 
+def expand_assigned(value, known):
+    """같은 명령 줄에서 앞서 정한 셸 변수(`D=/경로; cd $D/repo`)를 그 값으로 펼친다. 모르는 변수는 그대로 둔다."""
+    return re.sub(r"\$(\w+)|\$\{(\w+)\}", lambda m: known.get(m.group(1) or m.group(2), m.group(0)), value)
+
+
 def job_command(seg):
     """`job.py <명령> ...` 의 명령 이름. 아니면 None. 감싸서 부른 것(python3 -W x, uv run)도 치도록 조각 어디에 있든
     job.py 뒤의 낱말을 본다. 리뷰 훅과 리드 훅이 같은 것을 쓴다."""
@@ -319,9 +329,13 @@ def located(command, cwd, lexical=False):
     """명령 줄의 단순 명령 조각마다 (그 조각이 도는 폴더, 토큰들)을 돌려준다. 같은 명령 줄의 cd 를 따라가고,
     git 의 -C 는 그 조각의 폴더로 읽어 토큰에서 뗀다. 셸 예약어, 감싸는 명령, 리다이렉트는 뗀다.
     폴더를 알 수 없으면(셸 변수, 없는 폴더) 그 조각의 폴더는 None 이다. 부르는 쪽이 세션 폴더로 판정한다.
+    같은 명령 줄에서 앞서 정한 셸 변수는 펼친다. 줄 밖에서 정한 변수는 알 수 없다.
     리다이렉트는 segments 가 이미 뗐다."""
-    out = []
-    for seg, join in joined(command):
+    out, assigned, known = [], [], {}
+    for i, (seg, join) in enumerate(joined(command, assigned)):
+        for at, var, value in assigned:
+            if at == i:
+                known[var] = expand_assigned(value, known)
         seg = unwrapped(seg)
         if not seg:
             continue
@@ -331,6 +345,7 @@ def located(command, cwd, lexical=False):
             if target != "-":
                 # 없는 폴더를 글자 그대로 푸는 것은 && 로 이을 때뿐이다. cd 가 실패하면 && 뒤는 돌지 않지만,
                 # ; || 줄바꿈 뒤는 앞 폴더에서 돈다
+                target = expand_assigned(target, known)
                 cwd = folder(cwd, target) or (folder(cwd, target, True) if lexical and join.startswith("&&") else None)
             continue
         here = cwd
@@ -341,7 +356,7 @@ def located(command, cwd, lexical=False):
                 if a in GIT_VALUE_OPTIONS and rest:
                     value = rest.pop(0)
                     if a == "-C":
-                        here = folder(here, value, lexical)
+                        here = folder(here, expand_assigned(value, known), lexical)
                     continue
                 args.append(a)
             seg = args + rest

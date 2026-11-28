@@ -52,6 +52,20 @@ class ParseTest(Repo):
         import merge_gate
         return [seg for _, seg in merge_gate.located(command, cwd or self.main)]
 
+    def test_같은_줄에서_정한_셸_변수의_폴더를_따라간다(self):
+        # PR 35 의 써 보기에서 `D=/경로; cd $D/repo && job.py review` 를 세션 폴더의 다른 워크트리 기록으로 판정해 막았다
+        import merge_gate
+        parent, name = os.path.split(self.wt)
+
+        def where(command):
+            return [here for here, _ in merge_gate.located(command, self.main)]
+
+        self.assertEqual(where("D=%s; cd $D/%s && job.py review x" % (parent, name)), [self.wt])
+        self.assertEqual(where("D=%s\ngit -C ${D}/%s status" % (parent, name)), [self.wt])
+        self.assertEqual(where("cd $D/%s && job.py review x; D=%s" % (name, parent)), [None])  # 쓴 뒤에 정한 것
+        self.assertEqual(where("D=%s cd $D/%s && job.py review x" % (parent, name)), [None])  # 그 명령에만 듣는 지정
+        self.assertEqual(where("cd $D/%s && job.py review x" % name), [None])  # 줄 밖에서 정한 것
+
     def test_따옴표로_묶은_리다이렉트_글자는_인자로_남는다(self):
         import merge_gate
         self.assertEqual(self.seg('git merge -m ">" feat/x'), [["git", "merge", "-m", ">", "feat/x"]])
