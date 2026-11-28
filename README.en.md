@@ -57,7 +57,6 @@ The goal is to delete prose as models get smarter until no lines are left, hence
 |---|---|
 | `job` | The smallest unit of work. Takes one plan and carries it through test-first, implementation, evidence, trying it by hand, code review, PR, merge, and report. If you narrow the scope ("up to the PR only"), it does only that much |
 | `dispatch` | Hands a code change to a new session (a worker) running in a worktree of that repo, and checks the evidence the worker left against the done criteria |
-| `nonstop` | Runs a task list to the end with nobody watching, doing a `job` for each task |
 | `try` | Uses the result the way a user would and leaves screens and logs |
 | `harden` | Blocks a mistake the AI made with a check (lint, test, hook, permission setting) instead of prose in the instructions |
 | `debug` | Starts from one failing command and diagnoses a bug in a fixed order |
@@ -85,7 +84,7 @@ Subagents the skills launch. No model is fixed.
 | `hooks/lead_gate.py` | Keeps a worker from doing the lead's work itself (clearing a human check, the comparison, deleting a merged worktree) |
 | `hooks/permission_gate.py` | In work with nobody watching, refuses an approval prompt instead of waiting on it |
 | `hooks/destructive_gate.py` | Blocks a few irreversible commands, such as deleting the home folder or force-pushing to the default branch. **The only hook that applies to every session with fade installed** |
-| `bin/` | The entry point that lets `job.py` and `nonstop.py` be called without a path |
+| `bin/` | The entry point that lets `job.py` be called without a path |
 | `tests/` | Tests for all of the above. Run on every PR |
 
 - The first four judge only in a worktree that has a `job` record. Where `job` is not used, they do nothing.
