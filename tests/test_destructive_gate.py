@@ -118,6 +118,14 @@ class DestructiveGateTest(unittest.TestCase):
                         "cd /no/such/dir; rm -rf .*"):
             self.assertBlocked(command, cwd=self.home)
 
+    def test_감싸는_명령과_그_옵션_뒤의_삭제도_본다(self):
+        for command in ("timeout 5 rm -rf ~", "sudo -u root rm -rf ~", "env -i rm -rf ~", "nice -n 10 rm -rf ~",
+                        "time -p rm -rf ~", "sudo -E rm -rf /"):
+            self.assertBlocked(command)
+
+    def test_명령_치환_안의_heredoc_본문에_홀수_따옴표가_있어도_뒤의_홈_삭제를_막는다(self):
+        self.assertBlocked("git commit -m \"$(cat <<'EOF'\nsay \"hi\nEOF\n)\" && cd ~ && rm -rf *")
+
     def test_삭제_훅은_병합_훅과_같은_명령_해석을_쓴다(self):
         with open(DESTRUCTIVE, encoding="utf-8") as f:
             src = f.read()

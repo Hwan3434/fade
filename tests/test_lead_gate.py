@@ -152,6 +152,18 @@ class LeadOnlyTest(Base):
         mod.bash_calls = lambda path: 1 / 0
         self.assertIsNone(mod.problem("ls -la && git status", self.main, self.own()))
 
+    def test_병합이_기록된_뒤에도_그_세션은_대조와_hardener_를_스스로_남기지_못한다(self):
+        self.start("--unattended")
+        self.assertEqual(job(self.wt, "merged", "abc1234").returncode, 0)
+        own = self.own()
+        for command in ('cd %s && job.py contrasted "맞음"' % self.wt, 'cd %s && job.py hardened "없음"' % self.wt):
+            self.assertIsNotNone(self.gate(command, own), command)
+
+    def test_dispatch_지시문으로_시작하지_않고_본문에_든_글귀는_워커가_아니다(self):
+        self.start()
+        own = self.own("job 스킬의 설명: 「" + DISPATCHED + "」로 시작하면 이 스킬을 쓴다")
+        self.assertIsNone(self.gate('cd %s && job.py contrasted x' % self.wt, own))
+
     def test_다른_세션과_사람이_있는_작업의_세션은_푼다(self):
         self.start("--unattended")
         lead = self.transcript(commands=["git worktree list"])
@@ -226,6 +238,37 @@ class RemoveTest(Base):
         for command in ("rm -rf %s/.claude/worktrees" % self.main, "rm -rf .claude/worktrees/*", "rm -rf .claude",
                         "git --no-pager worktree remove %s" % self.wt):
             self.assertIsNotNone(self.gate(command, lead), command)
+
+    def test_홈_변수와_글롭과_중괄호와_기록_폴더_지우기도_본다(self):
+        self.merged()
+        lead = self.transcript()
+        rel = os.path.relpath(self.wt, os.path.expanduser("~")) if self.wt.startswith(os.path.expanduser("~")) else None
+        common = subprocess.run(["git", "rev-parse", "--git-common-dir"], cwd=self.main, capture_output=True,
+                                text=True).stdout.strip()
+        commands = ["rm -rf .claude/worktrees/x*", "rm -rf .claude/worktrees/{x,zz}", "rm --recursive %s" % self.wt,
+                    "rm -rf %s" % os.path.join(self.main, common, "worktrees", "x")]
+        if rel:
+            commands.append('rm -rf "$HOME/%s"' % rel)
+        for command in commands:
+            self.assertIsNotNone(self.gate(command, lead), command)
+
+    def test_레포_밖_워크트리를_담은_git_아닌_폴더_지우기도_본다(self):
+        outside = tempfile.TemporaryDirectory()
+        self.addCleanup(outside.cleanup)
+        wt = os.path.join(os.path.realpath(outside.name), "wts", "y")
+        git(self.main, "worktree", "add", "-q", "-b", "feat/y", wt)
+        self.assertEqual(job(wt, "start", "작업", "--unattended").returncode, 0)
+        self.assertEqual(job(wt, "merged", "abc").returncode, 0)
+        self.assertIsNotNone(self.gate("rm -rf " + os.path.dirname(wt), self.transcript()))
+
+    def test_워크트리와_무관한_재귀_삭제에는_세션_기록을_읽지_않는다(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("lead_gate_t2", LEAD)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        mod.bash_calls = lambda path: 1 / 0
+        os.makedirs(os.path.join(self.main, "build"))
+        self.assertIsNone(mod.problem("rm -rf build", self.main, self.own()))
 
     def test_셸_변수로_시작한_작업의_정리는_리드_기록을_요구한다(self):
         self.merged()

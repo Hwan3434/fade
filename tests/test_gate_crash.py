@@ -78,6 +78,31 @@ class ParseTest(Repo):
             self.assertIsNone(self.gate(command, self.main), command)
         self.denied("cat > n.md <<'END-NOTES'\nbody\nEND-NOTES\ngit merge feat/x", self.main)
 
+    def test_명령_치환_안의_heredoc_본문은_따옴표가_홀수여도_명령이_아니다(self):
+        # git commit -m "$(cat <<'EOF' ... EOF )" 는 커밋 메시지의 표준 꼴이다. 본문의 따옴표나 명령 같은 줄에 흔들리지 않는다
+        msg = "git commit -m \"$(cat <<'EOF'\nsay \"hi\ngit merge feat/x\nEOF\n)\""
+        self.assertEqual(self.seg(msg)[0][:3], ["git", "commit", "-m"])
+        self.assertEqual(len(self.seg(msg)), 1)
+        self.assertIsNone(self.gate(msg, self.main))
+        self.denied(msg + " && git merge feat/x", self.main)
+        # 여러 줄 따옴표 글 안의 <<EOF 글자는 heredoc 이 아니다. 뒤 줄을 삼키지 않는다
+        self.denied('git commit -m "a\nuse <<EOF here\nb"\ngit merge feat/x', self.main)
+
+    def test_따옴표_없는_heredoc_끝_글에_하이픈이_있어도_그_줄까지가_본문이다(self):
+        self.assertIsNone(self.gate("cat > n.md <<END-NOTES\ngit merge feat/x\nEND-NOTES", self.main))
+        self.denied("cat > n.md <<END-NOTES\nbody\nEND-NOTES\ngit merge feat/x", self.main)
+
+    def test_감싸는_명령과_그_옵션_뒤의_병합도_본다(self):
+        for command in ("timeout 60 gh pr merge 3 --squash", "timeout -k 5 60 gh pr merge 3", "nice -n 5 git merge feat/x",
+                        "time -p git merge feat/x", "sudo -u root git merge feat/x", "env -i git merge feat/x",
+                        "env -u X FOO=1 git merge feat/x"):
+            self.denied(command, self.main)
+
+    def test_폴더를_알_수_없는_cd_뒤의_병합은_세션_폴더로_본다(self):
+        for command in ("cd /nonexistent; git merge feat/x", "cd /nonexistent || git merge feat/x",
+                        "cd /nonexistent\ngit merge feat/x"):
+            self.denied(command, self.main)
+
     def test_산술의_시프트와_따옴표_안의_꺾쇠_둘은_heredoc_이_아니다(self):
         for command in ("echo $((1<<2))\ngit merge feat/x", "n=$((1<<bits))\ngit merge feat/x", "((x<<=y))\ngit merge feat/x",
                         "echo $(( (1<<n) + 1 ))\ngit merge feat/x",

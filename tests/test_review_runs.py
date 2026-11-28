@@ -168,7 +168,53 @@ class GateTest(unittest.TestCase):
         self.read_patch(offset=260, limit=259)
         self.assertIsNone(self.gate())
 
-    def test_읽기가_실패했으면_치지_않는다(self):
+    def test_같은_앞부분을_두_번_읽어도_끝_줄을_읽은_것이_아니다(self):
+        # 잘린 Read 를 다시 부르는 일은 흔하다. 끝 줄이 앞부분에 나온 줄과 같아도 그 자리를 읽어야 한다
+        commit_file(self.cwd, "a.py", "def f():\n    if x:\n        y()\n    }\n}\n" * 2, "닫는 줄")
+        self.assertEqual(job(self.cwd, "review-files", "main").returncode, 0)
+        with open(self.patch, encoding="utf-8") as f:
+            n = len(f.read().splitlines())
+        self.t.prompt(MARKER)
+        self.read_patch(shown=(1, n - 2))
+        self.read_patch(shown=(1, n - 2))
+        self.denied()
+        self.read_patch(offset=n - 2, limit=2)
+        self.assertIsNone(self.gate())
+
+    def test_여러_hunk_파일을_읽다_잘리면_잘린_출력이라고_말한다(self):
+        # 가장 흔한 실패(Read 가 앞부분만 돌려줌)에서 원인을 「범위가 다른 diff」로 거꾸로 말하지 않는다
+        base = "".join("line %d\n" % i for i in range(80))
+        subprocess.run(["git", "switch", "-q", "main"], cwd=self.cwd, check=True)
+        commit_file(self.cwd, "b.py", base, "긴 파일")
+        subprocess.run(["git", "switch", "-q", "feat/x"], cwd=self.cwd, check=True)
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid", "merge", "-q", "--no-edit",
+                        "main"], cwd=self.cwd, check=True)
+        commit_file(self.cwd, "b.py", base.replace("line 5\n", "LINE 5\n").replace("line 40\n", "LINE 40\n")
+                    .replace("line 75\n", "LINE 75\n"), "세 군데")
+        self.assertEqual(job(self.cwd, "review-files", "main").returncode, 0)
+        with open(self.patch, encoding="utf-8") as f:
+            n = len(f.read().splitlines())
+        self.t.prompt(MARKER)
+        self.read_patch(shown=(1, n - 6))
+        self.assertIn("잘린 출력", self.denied())
+
+    def test_오류로_끝난_code_review_호출은_부른_것이_아니다(self):
+        self.t.tool("Skill", {"skill": "code-review", "args": "medium x"}, result="Unknown skill: code-review", error=True)
+        self.assertIn("code-review 가 돈 흔적이 없다", self.denied())
+
+    def test_플러그인_이름이_붙은_code_review_도_부른_것이다(self):
+        self.t.tool("Skill", {"skill": "anthropic:code-review", "args": "medium x"})
+        out = self.raw({"hook_event_name": "PreToolUse", "tool_name": "Bash", "cwd": self.cwd,
+                        "transcript_path": self.t.path, "tool_input": {"command": "job.py review 0 \"x\""}})
+        self.assertIn("머리 글", out.get("systemMessage", ""))
+
+    def test_해석하지_못해도_job_py_review_를_부르지_않는_명령에는_조용하다(self):
+        for command in ('grep -rn "job.py review README.md', "echo 'job.py review-files 를 쓴다"):
+            payload = {"hook_event_name": "PreToolUse", "tool_name": "Bash", "cwd": self.cwd,
+                       "transcript_path": self.t.path, "tool_input": {"command": command}}
+            self.assertEqual(self.raw(payload), {}, command)
+
+    def test_오류로_끝나_내용이_없는_읽기는_읽은_것이_아니다(self):
         self.t.prompt(MARKER)
         self.t.tool("Read", {"file_path": self.patch}, result="error", error=True)
         self.denied()
