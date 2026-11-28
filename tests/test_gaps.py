@@ -3,11 +3,10 @@
 import json
 import os
 import subprocess
-import sys
 import tempfile
 import unittest
 
-from helpers import GATE, PERMISSION, ROOT, commit_and_switch, commit_file, git_repo, job
+from helpers import GATE, PERMISSION, ROOT, commit_and_switch, commit_file, git_repo, hook, job
 
 GIT = ["git", "-c", "user.name=fade-test", "-c", "user.email=fade-test@example.invalid"]
 
@@ -57,7 +56,7 @@ class Repo(unittest.TestCase):
                                                            text=True).stdout.strip())
         env = dict(os.environ, PATH=self.bin.name + os.pathsep + os.environ["PATH"])
         payload = {"hook_event_name": "PreToolUse", "tool_name": "Bash", "cwd": cwd, "tool_input": {"command": command}}
-        r = subprocess.run([sys.executable, GATE], input=json.dumps(payload), capture_output=True, text=True, env=env)
+        r = hook(GATE, json.dumps(payload), env=env)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(r.stderr, "", r.stderr)
         return json.loads(r.stdout)["hookSpecificOutput"] if r.stdout.strip() else None
@@ -126,7 +125,7 @@ class GitMergeTest(Repo):
         from helpers import DESTRUCTIVE
         for command in ("grep -q 'x$' f && rm -rf ~ && echo 'y'", "rm -rf ~ && echo $'it\\'s'"):
             payload = {"hook_event_name": "PreToolUse", "tool_name": "Bash", "cwd": self.wt, "tool_input": {"command": command}}
-            r = subprocess.run([sys.executable, DESTRUCTIVE], input=json.dumps(payload), capture_output=True, text=True)
+            r = hook(DESTRUCTIVE, json.dumps(payload))
             self.assertEqual(json.loads(r.stdout)["hookSpecificOutput"]["permissionDecision"], "deny", command)
 
     def test_작업_브랜치를_base_로_push_해도_본다(self):
@@ -166,7 +165,7 @@ class OtherFolderTest(Repo):
 
     def ask(self, cwd, tool="Bash", tool_input=None):
         payload = {"hook_event_name": "PermissionRequest", "tool_name": tool, "cwd": cwd, "tool_input": tool_input or {}}
-        r = subprocess.run([sys.executable, PERMISSION], input=json.dumps(payload), capture_output=True, text=True)
+        r = hook(PERMISSION, json.dumps(payload))
         self.assertEqual(r.returncode, 0, r.stderr)
         return json.loads(r.stdout)["hookSpecificOutput"] if r.stdout.strip() else None
 

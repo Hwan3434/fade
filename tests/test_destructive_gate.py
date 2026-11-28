@@ -2,11 +2,10 @@
 import json
 import os
 import subprocess
-import sys
 import tempfile
 import unittest
 
-from helpers import DESTRUCTIVE, git_repo
+from helpers import DESTRUCTIVE, git_repo, hook
 
 
 def git(cwd, *args):
@@ -24,11 +23,10 @@ class DestructiveGateTest(unittest.TestCase):
         self.addCleanup(work.cleanup)
         self.cwd = work.name
 
-    def gate(self, command, cwd=None, tool="Bash"):
+    def gate(self, command, cwd=None, tool="Bash", crash=False):
         payload = {"hook_event_name": "PreToolUse", "tool_name": tool, "cwd": cwd or self.cwd,
                    "tool_input": {"command": command}}
-        r = subprocess.run([sys.executable, DESTRUCTIVE], input=json.dumps(payload), capture_output=True, text=True,
-                           env=dict(os.environ, HOME=self.home))
+        r = hook(DESTRUCTIVE, json.dumps(payload), env=dict(os.environ, HOME=self.home), crash=crash)
         self.assertEqual(r.returncode, 0, r.stderr)
         return json.loads(r.stdout)["hookSpecificOutput"] if r.stdout.strip() else None
 
@@ -237,13 +235,13 @@ class DestructiveGateTest(unittest.TestCase):
     def test_Bash_가_아니거나_명령이_없으면_말하지_않는다(self):
         self.assertIsNone(self.gate("rm -rf ~", tool="Read"))
         payload = {"hook_event_name": "PreToolUse", "tool_name": "Bash", "cwd": self.cwd, "tool_input": {}}
-        r = subprocess.run([sys.executable, DESTRUCTIVE], input=json.dumps(payload), capture_output=True, text=True)
+        r = hook(DESTRUCTIVE, json.dumps(payload))
         self.assertEqual((r.returncode, r.stdout.strip()), (0, ""))
 
     def test_입력이_깨지거나_명령을_해석하지_못하면_판정하지_않는다(self):
-        r = subprocess.run([sys.executable, DESTRUCTIVE], input="{깨진", capture_output=True, text=True)
+        r = hook(DESTRUCTIVE, "{깨진", crash=True)
         self.assertEqual((r.returncode, r.stdout.strip()), (0, ""))
-        self.assertIsNone(self.gate('rm -rf "/'))  # 닫히지 않은 따옴표
+        self.assertIsNone(self.gate('rm -rf "/', crash=True))  # 닫히지 않은 따옴표
 
 
 if __name__ == "__main__":

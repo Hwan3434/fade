@@ -6,7 +6,7 @@ import sys
 import tempfile
 import unittest
 
-from helpers import GATE, PERMISSION, ROOT, commit_and_switch, fake_gh, git_repo, job, mistakes
+from helpers import GATE, PERMISSION, ROOT, commit_and_switch, fake_gh, git_repo, hook, job, mistakes
 
 
 def git_dir(cwd):
@@ -133,8 +133,7 @@ class TempRepoTest(Base):
 
     def hook(self, script, payload, env):
         payload = dict(payload, cwd=self.cwd)
-        r = subprocess.run([sys.executable, script], input=json.dumps(payload), capture_output=True, text=True, env=env)
-        self.assertEqual(r.returncode, 0, r.stderr)
+        r = hook(script, json.dumps(payload), env=env)
         return json.loads(r.stdout)["hookSpecificOutput"]
 
     def test_훅도_임시_레포에서는_기본_실수_기록에_쓰지_않고_막기는_한다(self):

@@ -3,12 +3,11 @@
 import json
 import os
 import subprocess
-import sys
 import tempfile
 import time
 import unittest
 
-from helpers import ROOT, git_repo, job
+from helpers import ROOT, git_repo, hook, job
 
 LEAD = os.path.join(ROOT, "hooks", "lead_gate.py")
 DISPATCHED = "fade:job 스킬로 아래 계획서를 수행한다. 사용자: 없음\n\n# 작업: x"
@@ -57,7 +56,7 @@ class Base(unittest.TestCase):
     def gate(self, command, transcript, cwd=None):
         payload = {"hook_event_name": "PreToolUse", "tool_name": "Bash", "cwd": cwd or self.main,
                    "transcript_path": transcript, "tool_input": {"command": command}}
-        r = subprocess.run([sys.executable, LEAD], input=json.dumps(payload), capture_output=True, text=True)
+        r = hook(LEAD, json.dumps(payload))
         self.assertEqual(r.returncode, 0, r.stderr)
         out = json.loads(r.stdout)["hookSpecificOutput"] if r.stdout.strip() else None
         return out["permissionDecisionReason"] if out and out.get("permissionDecision") == "deny" else None

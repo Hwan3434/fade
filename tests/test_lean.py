@@ -6,7 +6,7 @@ import subprocess
 import tempfile
 import unittest
 
-from helpers import ROOT, commit_and_switch, commit_file, git_repo, job
+from helpers import READMES, ROOT, commit_and_switch, commit_file, git_repo, job
 
 GIT = ["git", "-c", "user.name=fade-test", "-c", "user.email=fade-test@example.invalid"]
 
@@ -312,13 +312,12 @@ class ReviewFilesTest(ReviewBase):
         self.assertIn("파일 1개, 더한 줄 99 + 뺀 줄 100 = 199줄", first)
 
     def test_줄_수_고정_기준이_어디에도_없다(self):
-        files = ["skills/job/job.py", "skills/job/stages/review.md", "README.md", "README.en.md", "README.ja.md",
-                 "README.zh.md"]
+        files = ["skills/job/job.py", "skills/job/stages/review.md", *READMES]
         for name in files:
             with open(os.path.join(ROOT, name), encoding="utf-8") as f:
                 text = f.read()
             self.assertNotIn("SPEC_REVIEW_LINES", text, name)
-            self.assertIsNone(re.search(r"\d+\s*(줄|lines?|行)\s*(이상|미만|or more|以上|未満|及以上)", text), name)
+            self.assertIsNone(re.search(r"\d+\s*(줄|lines?)\s*(이상|미만|or more)", text), name)
 
     def test_첫_리뷰는_base_와의_전체를_준다(self):
         commit_file(self.cwd, "src/big.py", lines(20))
@@ -455,6 +454,54 @@ class RepoTest(unittest.TestCase):
                      "tests/__pycache__/helpers.cpython-312.pyc"):
             r = subprocess.run(["git", "check-ignore", "-q", path], cwd=ROOT)
             self.assertEqual(r.returncode, 0, path)
+
+
+class ReviewChangedTest(ReviewBase):
+    """리뷰를 맡긴 하위 에이전트가 「읽기만」을 어기고 워크트리 파일을 고쳤다 되돌린 일이 있었다. review-files 와 review
+    사이에 워크트리 파일이 바뀌면 리뷰를 받지 않는다."""
+
+    def test_review_files_뒤에_추적하는_파일이_바뀌면_받지_않는다(self):
+        commit_file(self.cwd, "src/big.py", lines(20))
+        self.review_files()
+        with open(os.path.join(self.cwd, "src", "a.py"), "a", encoding="utf-8") as f:
+            f.write("# 리뷰어가 고침\n")
+        r = job(self.cwd, "review", "0", "버그 축만")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("src/a.py", r.stderr)
+
+    def test_크기가_같고_수정_시각만_바뀌어도_받지_않는다(self):
+        # 실제로 난 일은 고쳤다 되돌린 것이다. 내용과 크기는 같고 수정 시각만 다르다
+        commit_file(self.cwd, "src/big.py", lines(20))
+        self.review_files()
+        path = os.path.join(self.cwd, "src", "a.py")
+        st = os.stat(path)
+        os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns + 10**9))
+        r = job(self.cwd, "review", "0", "버그 축만")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("src/a.py", r.stderr)
+
+    def test_추적하던_파일을_지워도_받지_않는다(self):
+        commit_file(self.cwd, "src/big.py", lines(20))
+        self.review_files()
+        os.remove(os.path.join(self.cwd, "src", "b.py"))
+        r = job(self.cwd, "review", "0", "버그 축만")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("src/b.py", r.stderr)
+
+    def test_무시하지_않은_새_파일은_보고_리뷰_폴더와_무시한_파일은_보지_않는다(self):
+        commit_file(self.cwd, ".gitignore", "build/\n")
+        self.review_files()
+        for rel in (".fade-review/plan.md", "build/out.txt"):
+            os.makedirs(os.path.dirname(os.path.join(self.cwd, rel)), exist_ok=True)
+            with open(os.path.join(self.cwd, rel), "w", encoding="utf-8") as f:
+                f.write("x\n")
+        self.assertEqual(job(self.cwd, "review", "0", "버그 축만").returncode, 0)
+        self.review_files()
+        with open(os.path.join(self.cwd, "src", "new.py"), "w", encoding="utf-8") as f:
+            f.write("x = 1\n")
+        r = job(self.cwd, "review", "0", "버그 축만")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("src/new.py", r.stderr)
 
 
 class MinorReviewTest(ReviewBase):

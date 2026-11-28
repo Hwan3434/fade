@@ -58,7 +58,7 @@ FADE_MISTAKES 를 정하지 않은 동안 쓰지 않는다. PR 을 기록하면 
                                          계획서 원문은 부르는 쪽이 plan.md 로 쓴다. 레포가 .gitattributes 에 linguist-generated,
                                          -diff, binary 로 표시한 파일은 두 diff 에서 빼고 이름과 줄 수를 알린다. 표시는
                                          base 의 .gitattributes 에서만 읽는다(이 브랜치가 더한 표시는 병합 뒤부터 듣는다). bug.patch 가
-                                         20000자를 넘으면 파일 경계에서 나눈 조각을 .fade-review/parts/ 에도 쓴다
+                                         20000바이트를 넘으면 파일 경계에서 나눈 조각을 .fade-review/parts/ 에도 쓴다
   job.py review  <남은 막는 지적 수> [<요약>] [--spec | --minor] [--dropped=<수>]
                                          코드 리뷰 결과. 지금 커밋에서 남은 막는 지적이 0 이어야 병합한다.
                                          앞 리뷰보다 수가 줄었으면 그 사이 slip 이나 새 red 가 있어야 받는다. 오탐이나
@@ -246,13 +246,15 @@ def unquoted_pipe(command):
 
 OPERATORS = {";", "&", "&&", "|", "||", "|&", "(", ")", "\n"}
 INTERPRETERS = re.compile(r"^(sh|bash|zsh|dash|python\S*|node|ruby|perl|source|\.)$")
-# 명령을 감싸는 명령: 그 옵션(과 timeout 의 시간, nice 의 값)을 건너뛴 다음 낱말이 명령 자리다
-WRAPPING = re.compile(r"^(timeout|env|nice|nohup|sudo|time|command|exec|stdbuf|ionice|xargs)$")
+# 명령을 감싸는 명령과 그 옵션 가운데 값을 따로 받는 것. 옵션(과 timeout 의 시간, nice 의 값)을 건너뛴 다음 낱말이
+# 명령 자리다. 병합 훅도 이 표를 읽는다(삭제 훅과 리드 훅은 병합 훅의 해석을 쓴다)
+WRAPPERS = {"sudo": {"-u", "-g", "-p", "-C", "-D", "-h", "-R", "-T", "-U", "-r", "-t", "--user", "--group"},
+            "env": {"-u", "-C", "-S", "--unset", "--chdir", "--split-string"}, "command": set(), "exec": {"-a"},
+            "nohup": set(), "time": {"-f", "-o", "--format", "--output"}, "nice": {"-n", "--adjustment"},
+            "timeout": {"-s", "-k", "--signal", "--kill-after"}, "ionice": {"-c", "-n", "-p"}, "stdbuf": {"-i", "-o", "-e"},
+            "xargs": {"-n", "-I", "-L", "-P", "-d", "-s", "-E"}}
 # 감싸는 명령과 해석기의 옵션 가운데 값을 따로 받는 것. 그 값은 명령 낱말이 아니다
-VALUE_OPTIONS = {"sudo": {"-u", "-g", "-p", "-C", "-D", "-h", "-R", "-T", "-U", "-r", "-t"}, "env": {"-u", "-C", "-S"},
-                 "nice": {"-n"}, "timeout": {"-s", "-k"}, "time": {"-f", "-o"}, "stdbuf": {"-i", "-o", "-e"},
-                 "ionice": {"-c", "-n", "-p"}, "xargs": {"-n", "-I", "-L", "-P", "-d", "-s", "-E"}, "exec": {"-a"},
-                 "sh": {"-o", "-O"}, "bash": {"-o", "-O"}, "zsh": {"-o"}, "dash": {"-o"}, "python": {"-W", "-X"}}
+VALUE_OPTIONS = dict(WRAPPERS, sh={"-o", "-O"}, bash={"-o", "-O"}, zsh={"-o"}, dash={"-o"}, python={"-W", "-X"})
 
 
 def command_words(command):
@@ -284,7 +286,7 @@ def command_words(command):
             continue  # timeout 의 시간, nice 의 값
         words.append(tok)
         name = os.path.basename(tok)
-        wrapped = bool(WRAPPING.match(name))
+        wrapped = name in WRAPPERS
         at_command = wrapped or bool(INTERPRETERS.match(name))
         owner = "python" if name.startswith("python") else name
     return words, tokens
@@ -312,7 +314,7 @@ def refused(cwd, command):
 
 
 def tail_of(text):
-    return "\n".join(text.splitlines()[-TAIL:])
+    return "\n".join(text.rstrip("\n").split("\n")[-TAIL:])
 
 
 def pending(cwd):
@@ -339,6 +341,20 @@ def untracked(cwd):
     return names(cwd, "ls-files", "--others", "--exclude-standard")
 
 
+def worktree_files(cwd):
+    """워크트리 파일(추적하는 파일과 무시되지 않은 새 파일, .fade-review/ 는 빼고)마다 수정 시각과 크기. 없는 파일은 None.
+    review-files 와 review 사이에 리뷰를 맡긴 하위 에이전트가 파일을 고쳤는지 본다."""
+    top, out = top_dir(cwd), {}
+    for rel in names(cwd, "ls-files", "--cached", "--others", "--exclude-standard"):
+        if rel and not rel.startswith(".fade-review/"):
+            try:
+                st = os.stat(os.path.join(top, rel))
+                out[rel] = [st.st_mtime_ns, st.st_size]
+            except OSError:
+                out[rel] = None
+    return out
+
+
 def changed_since(cwd, red):
     """red 를 찍은 뒤 내용이 바뀐 파일. red 때 커밋 전 변경이 있던 파일은 그때의 내용과 견준다(테스트와 구현이 한
     파일이어도 red 뒤에 더 고치면 바뀐 것이다). red 의 커밋이 사라졌으면 None(판정하지 않는다)."""
@@ -350,7 +366,7 @@ def changed_since(cwd, red):
 
 
 def fenced(text):
-    return ["", "  ```text"] + ["  " + line for line in text.splitlines()] + ["  ```", ""]
+    return ["", "  ```text"] + ["  " + line for line in text.rstrip("\n").split("\n")] + ["  ```", ""]
 
 
 def at(record):
@@ -694,7 +710,7 @@ def file_lines(files):
         out.append("    - " + f)
         if f.endswith(".log") and os.path.isfile(f):
             with open(f, encoding="utf-8", errors="replace") as fh:
-                out += ["", "      ```text"] + ["      " + line for line in fh.read().splitlines()] + ["      ```", ""]
+                out += ["", "      ```text"] + ["      " + line for line in fh.read().rstrip("\n").split("\n")] + ["      ```", ""]
     return out
 
 
@@ -791,7 +807,9 @@ def show(state, cwd, full=False):
     return mask("\n".join(lines))
 
 
-PART_CHARS = 20000  # bug.patch 를 조각으로 나누는 크기. Bash 도구가 출력을 통째로 보여 주는 한도(약 30000자) 아래다
+# bug.patch 를 조각으로 나누는 크기(UTF-8 바이트). Bash 도구가 출력을 통째로 보여 주는 한도(약 30000바이트) 아래다.
+# 한도는 글자가 아니라 바이트라, 한글이 많으면 글자로 재서는 넘는다
+PART_BYTES = 20000
 
 
 def changed(cwd, *revs):
@@ -877,10 +895,10 @@ def review_diff(top, base, revs, skip):
 
 
 def split_patch(text):
-    """bug.patch 를 파일 경계에서 나눠 조각마다 PART_CHARS 를 넘지 않게 묶는다. 한 파일이 그보다 크면 그 파일 하나가 한 조각이다."""
+    """bug.patch 를 파일 경계에서 나눠 조각마다 PART_BYTES 를 넘지 않게 묶는다. 한 파일이 그보다 크면 그 파일 하나가 한 조각이다."""
     files, parts = re.split(r"(?m)^(?=diff --git )", text), []
     for chunk in (f for f in files if f):
-        if parts and len(parts[-1]) + len(chunk) <= PART_CHARS:
+        if parts and len((parts[-1] + chunk).encode("utf-8")) <= PART_BYTES:
             parts[-1] += chunk
         else:
             parts.append(chunk)
@@ -899,7 +917,7 @@ def review_files(cwd, state, base):
         stat = subprocess.run(numstat[:3] + numstat[4:], cwd=top, capture_output=True, text=True)
     if stat.returncode != 0:
         sys.exit("base 와의 diff 를 만들지 못했다: " + stat.stderr.strip())
-    rows = [row.split("\t", 2) for row in stat.stdout.splitlines()]
+    rows = [row.split("\t", 2) for row in stat.stdout.split("\n") if row]
     # 바이너리 파일은 줄 수가 - 로 나온다. 세지 않는다
     added, removed = (sum(int(row[i]) for row in rows if row[i].isdigit()) for i in (0, 1))
     now, review = head(cwd), state.get("review") or {}
@@ -925,7 +943,7 @@ def review_files(cwd, state, base):
     os.makedirs(folder, exist_ok=True)
     shutil.rmtree(os.path.join(folder, "parts"), ignore_errors=True)
     parts = []
-    if len(bug) > PART_CHARS:
+    if len(bug.encode("utf-8")) > PART_BYTES:
         os.makedirs(os.path.join(folder, "parts"))
         for i, text in enumerate(split_patch(bug), 1):
             path = os.path.join(".fade-review", "parts", "%02d.patch" % i)
@@ -944,10 +962,11 @@ def review_files(cwd, state, base):
                        ("bug.patch", bug)):
         with open(os.path.join(folder, name), "w", encoding="utf-8") as f:
             f.write(text)
+    state["review_files"]["files"] = worktree_files(cwd)
     print("base 와의 diff: 파일 %d개, 더한 줄 %d + 뺀 줄 %d = %d줄" % (len(rows), added, removed, added + removed))
     print("diff.patch: " + ("고친 부분만(명세 리뷰어가 본 %s 뒤의 diff)" % short(since) if since else "전체(base 와의 diff)"))
-    print("\n".join(stat.stdout.splitlines()))
-    print("bug.patch: %d줄, %d자 (%s)" % (bug.count("\n"), len(bug),
+    print(stat.stdout.rstrip("\n"))
+    print("bug.patch: %d줄, %d바이트 (%s)" % (bug.count("\n"), len(bug.encode("utf-8")),
                                        "앞 리뷰가 본 %s 뒤" % short(last) if last else "base 와의 전체"))
     if skip:
         print("리뷰에서 뺀 파일(base 의 .gitattributes 표시) %d개: %s"
@@ -964,8 +983,8 @@ def review_files(cwd, state, base):
         print("bug.patch 가 비었다: 바뀐 파일이 모두 읽을 대상이 아니라고 표시돼 있다. 버그 축은 읽을 것이 없으니 "
               "code-review 를 부르지 않고 그 사실을 리뷰 요약에 적어 남긴다. 명세 리뷰어는 diff.patch 로 본다")
     if parts:
-        print("bug.patch 가 %d자를 넘어 파일 단위 조각 %d개로도 썼다. 조각마다 code-review 를 부른다(`medium <조각 경로>`):"
-              % (PART_CHARS, len(parts)))
+        print("bug.patch 가 %d바이트를 넘어 파일 단위 조각 %d개로도 썼다. 조각마다 code-review 를 부른다(`medium <조각 경로>`):"
+              % (PART_BYTES, len(parts)))
         for p in parts:
             print("  %s: %d줄, %s" % (p["path"], p["lines"], ", ".join(p["files"])))
     return folder
@@ -1177,6 +1196,14 @@ def main(argv):
             sys.exit("남은 막는 지적 수는 0 이상의 정수다")
         made, minor, spec, now = state.get("review_files") or {}, "--minor" in options, "--spec" in options, head(cwd)
         note, prev = " ".join(args[1:2]), state.get("review") or {}
+        if made.get("files") is not None and made.get("head") == now:
+            files = worktree_files(cwd)
+            moved = sorted(r for r in set(made["files"]) | set(files) if made["files"].get(r) != files.get(r))
+            if moved:
+                listed = ", ".join(moved[:10]) + (" 외 %d개" % (len(moved) - 10) if len(moved) > 10 else "")
+                sys.exit("review-files 뒤에 워크트리 파일이 바뀌었다: %s. 리뷰는 바뀌기 전의 파일을 본 것이다. 누가 무엇을 "
+                         "바꿨는지 확인하고(리뷰를 맡긴 에이전트는 읽기만 한다), 남길 것은 커밋한 뒤 review-files 부터 다시 "
+                         "리뷰한다" % listed)
         if minor and spec:
             sys.exit("--spec 과 --minor 는 함께 쓰지 않는다. 사소한 지적을 고친 커밋은 명세 리뷰어를 다시 띄우지 않는다")
         if minor:

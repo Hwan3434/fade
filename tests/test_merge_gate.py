@@ -1,11 +1,10 @@
 import json
 import os
 import subprocess
-import sys
 import tempfile
 import unittest
 
-from helpers import GATE, commit_and_switch, commit_file, fake_gh, git_repo, job, mistakes
+from helpers import GATE, commit_and_switch, commit_file, fake_gh, git_repo, hook, job, mistakes
 
 
 def job_dir(cwd):
@@ -20,13 +19,12 @@ class MergeGateTest(unittest.TestCase):
         self.addCleanup(self.bin.cleanup)
         self.cwd = self.repo.name
 
-    def gate(self, command, ci_exit=0, ci_out="", ci_err="", head=None, head_exit=0, **extra_env):
+    def gate(self, command, ci_exit=0, ci_out="", ci_err="", head=None, head_exit=0, crash=False, **extra_env):
         fake_gh(self.bin.name, ci_exit, ci_out, ci_err, head=head, head_exit=head_exit)
         env = dict(os.environ, PATH=self.bin.name + os.pathsep + os.environ["PATH"], **extra_env)
         payload = {"hook_event_name": "PreToolUse", "tool_name": "Bash", "cwd": self.cwd,
                    "tool_input": {"command": command}}
-        r = subprocess.run([sys.executable, GATE], input=json.dumps(payload), capture_output=True,
-                           text=True, env=env)
+        r = hook(GATE, json.dumps(payload), env=env, crash=crash)
         self.assertEqual(r.returncode, 0, r.stderr)
         return json.loads(r.stdout)["hookSpecificOutput"] if r.stdout.strip() else None
 
@@ -212,7 +210,7 @@ class MergeGateTest(unittest.TestCase):
         job(self.cwd, "start", "작업")
         blocker = os.path.join(self.cwd, "file")
         open(blocker, "w").close()
-        out = self.gate("gh pr merge 3 --squash", FADE_MISTAKES=os.path.join(blocker, "mistakes.jsonl"))
+        out = self.gate("gh pr merge 3 --squash", crash=True, FADE_MISTAKES=os.path.join(blocker, "mistakes.jsonl"))
         self.assertEqual(out["permissionDecision"], "deny")
 
     def test_여러_줄_명령의_뒷줄_병합도_본다(self):
@@ -231,7 +229,7 @@ class MergeGateTest(unittest.TestCase):
         self.assertIsNone(self.gate('git commit -m "$(cat <<EOF\ngh pr merge 3\nEOF\n)"'))
 
     def test_입력이_깨져도_막지_않고_평소_흐름으로_넘긴다(self):
-        r = subprocess.run([sys.executable, GATE], input="{깨진", capture_output=True, text=True)
+        r = hook(GATE, "{깨진", crash=True)
         self.assertEqual(r.returncode, 0)
         self.assertEqual(r.stdout.strip(), "")
 

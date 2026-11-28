@@ -108,7 +108,7 @@ def worktrees_under(path):
         if wt:
             found.add(wt)
     if job.git_dir(real):
-        for line in merge_gate.git_out(real, "worktree", "list", "--porcelain").splitlines():
+        for line in merge_gate.git_out(real, "worktree", "list", "--porcelain").split("\n"):
             wt = os.path.realpath(line[len("worktree "):]) if line.startswith("worktree ") else None
             if wt and (wt == real or wt.startswith(real.rstrip("/") + "/")):
                 found.add(wt)
@@ -117,7 +117,7 @@ def worktrees_under(path):
             if os.path.isfile(marker):
                 found.add(os.path.dirname(marker))
             elif os.path.isdir(marker):
-                for line in merge_gate.git_out(os.path.dirname(marker), "worktree", "list", "--porcelain").splitlines():
+                for line in merge_gate.git_out(os.path.dirname(marker), "worktree", "list", "--porcelain").split("\n"):
                     if line.startswith("worktree "):
                         found.add(os.path.realpath(line[len("worktree "):]))
     out = []

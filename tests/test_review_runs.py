@@ -2,12 +2,11 @@
 import json
 import os
 import subprocess
-import sys
 import tempfile
 import time
 import unittest
 
-from helpers import ROOT, commit_and_switch, commit_file, job
+from helpers import READMES, ROOT, commit_and_switch, commit_file, hook, job
 
 REVIEW_GATE = os.path.join(ROOT, "hooks", "review_gate.py")
 MARKER = "## Phase 0 — Gather the diff"  # code-review 스킬의 지시문 머리. 앱에서는 본체 기록에, CLI 에서는 하위 에이전트 기록에 든다
@@ -74,7 +73,7 @@ class GateTest(unittest.TestCase):
     def gate(self, command="job.py review 0 \"버그 축만\""):
         payload = {"hook_event_name": "PreToolUse", "tool_name": "Bash", "cwd": self.cwd, "transcript_path": self.t.path,
                    "tool_input": {"command": command}}
-        r = subprocess.run([sys.executable, REVIEW_GATE], input=json.dumps(payload), capture_output=True, text=True)
+        r = hook(REVIEW_GATE, json.dumps(payload))
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(r.stderr, "")
         return json.loads(r.stdout)["hookSpecificOutput"] if r.stdout.strip() else None
@@ -208,6 +207,17 @@ class GateTest(unittest.TestCase):
         self.t.prompt(MARKER)
         self.t.tool("Read", {"file_path": self.patch},
                     result="\n".join("%6d\t%s" % (i, l) for i, l in enumerate(lines, 1)))
+        self.assertIsNone(self.gate())
+
+    def test_첫_줄에_wc_출력이_붙은_파일을_Read_로_읽어도_받는다(self):
+        # PR 34 리뷰에서 실제로 났다. `wc -l <조각> && cat <조각>` 의 출력이 파일로 빠져 그 파일을 Read 로 읽으니, 1번 줄이
+        # wc 출력이고 2번 줄부터 조각이었다. 첫 줄에만 자리를 맞춰 보던 훅이 한 줄도 읽지 않았다고 막았다
+        with open(self.patch, encoding="utf-8", newline="") as f:
+            lines = f.read().split("\n")[:-1]
+        shown = ["%8d %s" % (len(lines), self.patch)] + lines
+        self.t.prompt(MARKER)
+        self.t.tool("Read", {"file_path": "/tmp/tool-results/out.txt"},
+                    result="\n".join("%6d\t%s" % (i, l) for i, l in enumerate(shown, 1)))
         self.assertIsNone(self.gate())
 
     def test_번호_없는_두_출력으로_앞과_끝을_나눠_읽어도_받는다(self):
@@ -484,14 +494,14 @@ class GateTest(unittest.TestCase):
         self.assertIsNone(self.gate("job.py review-files main"))
         self.assertIsNone(self.gate("job.py show"))
 
-    def raw(self, payload):
-        r = subprocess.run([sys.executable, REVIEW_GATE], input=json.dumps(payload), capture_output=True, text=True)
+    def raw(self, payload, crash=False):
+        r = hook(REVIEW_GATE, json.dumps(payload), crash=crash)
         self.assertEqual(r.returncode, 0, r.stderr)
         return json.loads(r.stdout) if r.stdout.strip() else {}
 
-    def passed_with_note(self, payload, word):
+    def passed_with_note(self, payload, word, crash=False):
         """판정할 수 없으면 막지 않되, 그 사실과 이유가 에이전트와 사용자에게 보인다."""
-        out = self.raw(payload)
+        out = self.raw(payload, crash)
         self.assertNotIn("permissionDecision", out.get("hookSpecificOutput", {}))
         self.assertIn(word, out.get("hookSpecificOutput", {}).get("additionalContext", ""))
         self.assertIn(word, out.get("systemMessage", ""))
@@ -511,9 +521,11 @@ class GateTest(unittest.TestCase):
             f.write("{}\n")
         os.chmod(self.t.path, 0)  # 세션 기록을 읽지 못한다
         self.addCleanup(os.chmod, self.t.path, 0o644)
-        self.passed_with_note({"hook_event_name": "PreToolUse", "tool_name": "Bash", "cwd": self.cwd,
-                               "transcript_path": self.t.path, "tool_input": {"command": "job.py review 0 \"x\""}},
-                              "판정하지 못했다")
+        payload = {"hook_event_name": "PreToolUse", "tool_name": "Bash", "cwd": self.cwd,
+                   "transcript_path": self.t.path, "tool_input": {"command": "job.py review 0 \"x\""}}
+        with self.assertRaises(AssertionError):  # 다른 훅처럼 stderr 에도 죽었다고 남겨 테스트가 죽음을 잡는다
+            hook(REVIEW_GATE, json.dumps(payload))
+        self.passed_with_note(payload, "판정하지 못했다", crash=True)
 
     def test_막은_뒤_실수_기록이_실패해도_JSON_은_하나다(self):
         self.t.prompt(MARKER)
@@ -522,7 +534,7 @@ class GateTest(unittest.TestCase):
         env = dict(os.environ, FADE_MISTAKES=os.path.join(blocker, "mistakes.jsonl"))  # 파일 아래에는 쓸 수 없다
         payload = {"hook_event_name": "PreToolUse", "tool_name": "Bash", "cwd": self.cwd, "transcript_path": self.t.path,
                    "tool_input": {"command": "job.py review 0 \"x\""}}
-        r = subprocess.run([sys.executable, REVIEW_GATE], input=json.dumps(payload), capture_output=True, text=True, env=env)
+        r = hook(REVIEW_GATE, json.dumps(payload), env=env, crash=True)
         out = json.loads(r.stdout)  # JSON 이 둘이면 여기서 깨진다
         self.assertEqual(out["hookSpecificOutput"]["permissionDecision"], "deny")
 
@@ -776,6 +788,18 @@ class ReviewFilesTest(unittest.TestCase):
             self.assertIn(os.path.join(".fade-review", "parts", name), out)
         self.assertEqual("".join(joined), bug)
 
+    def test_한글이_많은_bug_patch_는_바이트로_재어_조각마다_한_번에_보이는_크기로_쓴다(self):
+        # PR 34 에서 한글·일본어·중국어 README 가 든 조각(19481자, 32487바이트)을 cat 하니 Bash 출력이 파일로 빠지고 앞부분만
+        # 보였다. 크기가 다른 출력으로 재 보니 Bash 도구의 한도는 글자가 아니라 바이트(약 30000)였다
+        text = "".join("가나다라마바사 %d\n" % i for i in range(600))
+        self.files(None, ko1_md=text, ko2_md=text)
+        parts = os.path.join(self.cwd, ".fade-review", "parts")
+        names = sorted(os.listdir(parts))
+        self.assertGreater(len(names), 1)
+        for name in names:
+            with open(os.path.join(parts, name), "rb") as f:
+                self.assertLessEqual(len(f.read()), 20000, name)
+
     def test_작은_bug_patch_는_조각을_쓰지_않고_앞의_조각을_지운다(self):
         big = "".join("line_%d = %d\n" % (i, i) for i in range(3000))
         self.files(None, big_py=big)
@@ -812,7 +836,7 @@ class TextTest(unittest.TestCase):
             self.assertIn(word, review, word)
 
     def test_README_가_뺀_파일과_나눈_리뷰를_말한다(self):
-        for name in ("README.md", "README.en.md", "README.ja.md", "README.zh.md"):
+        for name in READMES:
             text = self.read(name)
             for word in ("linguist-generated", "parts/"):
                 self.assertIn(word, text, (name, word))
