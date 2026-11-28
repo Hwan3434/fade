@@ -308,5 +308,6 @@ if __name__ == "__main__":
         payload = json.load(sys.stdin)
         main(payload)
     except Exception as e:  # 훅이 죽으면 막지 않되, job.py review 를 판정하던 중이면 판정하지 못했다고 알린다
+        print("fade review_gate: %s" % e, file=sys.stderr)  # 다른 훅과 같은 표시. 테스트가 죽음을 잡는다
         if REVIEW_WORDS.search(str(((payload if isinstance(payload, dict) else {}).get("tool_input") or {}).get("command"))):
             note("훅이 오류로 끝났다(%s: %s)" % (type(e).__name__, e))
