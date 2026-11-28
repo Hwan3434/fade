@@ -10,6 +10,7 @@ GATE = os.path.join(ROOT, "hooks", "merge_gate.py")
 PERMISSION = os.path.join(ROOT, "hooks", "permission_gate.py")
 DESTRUCTIVE = os.path.join(ROOT, "hooks", "destructive_gate.py")
 AGENTS = os.path.join(ROOT, "agents")
+READMES = ("README.md", "README.en.md")
 
 # 테스트가 부르는 job.py 와 훅이 사용자의 실제 실수 기록(~/.claude/fade/mistakes.jsonl)에 쓰지 않게,
 # 이 모듈을 읽는 순간 모든 하위 프로세스가 물려받을 기록 경로를 임시 폴더로 바꾼다.
@@ -52,6 +53,17 @@ def commit_file(cwd, name, text, message="수정"):
 
 def job(cwd, *args, env=None):
     return subprocess.run([sys.executable, JOB, *args], cwd=cwd, capture_output=True, text=True, env=env)
+
+
+def hook(path, payload, env=None, crash=False):
+    """훅을 부른다. 훅은 죽어도 종료 코드 0 으로 끝나 막지도 허용하지도 않고 stderr 에 `fade <훅 이름>:` 만 남기니,
+    그 글이 있으면 테스트를 실패시킨다. 일부러 죽이는 테스트만 crash=True 로 연다."""
+    r = subprocess.run([sys.executable, path], input=payload if isinstance(payload, str) else json.dumps(payload),
+                       capture_output=True, text=True, env=env)
+    name = os.path.splitext(os.path.basename(path))[0]
+    if r.returncode != 0 or (not crash and "fade %s:" % name in r.stderr):
+        raise AssertionError("훅 %s 이 죽었다(종료 코드 %d): %s" % (name, r.returncode, r.stderr))
+    return r
 
 
 def fake_gh(dirpath, exit_code, output="", error="", head=None, head_exit=0):
