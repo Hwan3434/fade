@@ -209,6 +209,17 @@ class GateTest(unittest.TestCase):
                     result="\n".join("%6d\t%s" % (i, l) for i, l in enumerate(lines, 1)))
         self.assertIsNone(self.gate())
 
+    def test_첫_줄에_wc_출력이_붙은_파일을_Read_로_읽어도_받는다(self):
+        # PR 34 리뷰에서 실제로 났다. `wc -l <조각> && cat <조각>` 의 출력이 파일로 빠져 그 파일을 Read 로 읽으니, 1번 줄이
+        # wc 출력이고 2번 줄부터 조각이었다. 첫 줄에만 자리를 맞춰 보던 훅이 한 줄도 읽지 않았다고 막았다
+        with open(self.patch, encoding="utf-8", newline="") as f:
+            lines = f.read().split("\n")[:-1]
+        shown = ["%8d %s" % (len(lines), self.patch)] + lines
+        self.t.prompt(MARKER)
+        self.t.tool("Read", {"file_path": "/tmp/tool-results/out.txt"},
+                    result="\n".join("%6d\t%s" % (i, l) for i, l in enumerate(shown, 1)))
+        self.assertIsNone(self.gate())
+
     def test_번호_없는_두_출력으로_앞과_끝을_나눠_읽어도_받는다(self):
         commit_file(self.cwd, "a.py", "def f():\n    if x:\n        y()\n    }\n}\n" * 2, "닫는 줄")
         self.assertEqual(job(self.cwd, "review-files", "main").returncode, 0)
