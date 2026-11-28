@@ -786,6 +786,18 @@ class ReviewFilesTest(unittest.TestCase):
             self.assertIn(os.path.join(".fade-review", "parts", name), out)
         self.assertEqual("".join(joined), bug)
 
+    def test_한글이_많은_bug_patch_는_바이트로_재어_조각마다_한_번에_보이는_크기로_쓴다(self):
+        # PR 34 에서 한글·일본어·중국어 README 가 든 조각(19481자, 32487바이트)을 cat 하니 Bash 출력이 파일로 빠지고 앞부분만
+        # 보였다. 크기가 다른 출력으로 재 보니 Bash 도구의 한도는 글자가 아니라 바이트(약 30000)였다
+        text = "".join("가나다라마바사 %d\n" % i for i in range(600))
+        self.files(None, ko1_md=text, ko2_md=text)
+        parts = os.path.join(self.cwd, ".fade-review", "parts")
+        names = sorted(os.listdir(parts))
+        self.assertGreater(len(names), 1)
+        for name in names:
+            with open(os.path.join(parts, name), "rb") as f:
+                self.assertLessEqual(len(f.read()), 20000, name)
+
     def test_작은_bug_patch_는_조각을_쓰지_않고_앞의_조각을_지운다(self):
         big = "".join("line_%d = %d\n" % (i, i) for i in range(3000))
         self.files(None, big_py=big)
