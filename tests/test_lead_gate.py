@@ -164,7 +164,7 @@ class LeadOnlyTest(Base):
 
 
 class RemoveTest(Base):
-    """병합된 워커의 워크트리는 리드의 대조와 hardener 기록이 있어야 지운다. 스스로 시작한 작업(nonstop)의 정리,
+    """병합된 워커의 워크트리는 리드의 대조와 hardener 기록이 있어야 지운다. 스스로 시작한 작업의 정리,
     병합되지 않은 작업(닫힌 PR), job 기록이 없는 워크트리는 막지 않는다."""
 
     def merged(self):
@@ -199,7 +199,7 @@ class RemoveTest(Base):
 
     def test_스스로_시작한_작업의_정리는_막지_않는다(self):
         self.merged()
-        self.assertIsNone(self.gate(self.removals()[0], self.own("/fade:nonstop 목록대로 해")))
+        self.assertIsNone(self.gate(self.removals()[0], self.own("이 작업을 job 으로 해 줘")))
 
     def test_dispatch_로_띄운_워커는_자기_워크트리도_지우지_못한다(self):
         self.merged()
@@ -285,7 +285,7 @@ class RemoveTest(Base):
 
     def test_셸_변수로_시작한_작업의_정리는_리드_기록을_요구한다(self):
         self.merged()
-        own = self.transcript("/fade:nonstop", ['cd "$WT" && job.py start --unattended "작업"'])
+        own = self.transcript("이 작업을 job 으로 해 줘", ['cd "$WT" && job.py start --unattended "작업"'])
         self.assertIsNotNone(self.gate(self.removals()[0], own))
 
     def test_병합되지_않은_작업과_기록이_없는_워크트리는_막지_않는다(self):

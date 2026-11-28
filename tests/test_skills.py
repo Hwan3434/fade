@@ -53,33 +53,16 @@ class ModelNameTest(unittest.TestCase):
             self.assertFalse(names_model(line), line)
 
 
-class NonstopCleanupTest(unittest.TestCase):
+class CleanupTest(unittest.TestCase):
     def setUp(self):
-        self.nonstop = read("skills/nonstop/SKILL.md")
         self.cleanup = section(read("skills/dispatch/SKILL.md"), "정리")
 
-    def test_nonstop_은_병합된_작업의_워크트리와_브랜치를_dispatch_의_정리대로_지운다(self):
-        body = section(self.nonstop, "작업이 병합되면")
-        self.assertIn("`dispatch/SKILL.md` 의 「정리」", body)
-        for word in ("워크트리", "브랜치", "PR 까지만", "hold", "blocked"):
-            self.assertIn(word, body)
-
-    def test_가리킨_dispatch_정리에_검사와_브랜치_삭제가_있다(self):
+    def test_dispatch_정리에_검사와_브랜치_삭제가_있다(self):
         self.assertIn("**워크트리를 검사한다.**", self.cleanup)
         self.assertIn("**브랜치를 지운다.**", self.cleanup)
         self.assertIn("headRefOid", self.cleanup)
         # PR 이 없는 레포(원격 없음)에서도 견줄 것이 있다
         self.assertIn("PR 이 없으면", self.cleanup)
-
-    def test_병합된_작업은_job_의_보고를_마친_뒤에_워크트리를_지운다(self):
-        # 8번 보고의 gh pr comment 와 show --save 는 워크트리의 기록을 읽는다
-        body = section(self.nonstop, "작업이 병합되면")
-        self.assertIn("`job` 의 8번 보고를 마친 뒤에", body)
-        self.assertNotIn("`job` 의 보고는 PR 본문에 남긴다", self.nonstop)
-
-    def test_정리의_검사를_nonstop_에_복사하지_않는다(self):
-        self.assertNotIn("headRefOid", self.nonstop)
-        self.assertNotIn("status --porcelain", self.nonstop)
 
 
 class DispatchQuestionTest(unittest.TestCase):
@@ -110,7 +93,7 @@ def step(text, title):
 
 
 class ShortCallTextTest(unittest.TestCase):
-    """`job.py`, `nonstop.py` 는 bin/ 을 거쳐 PATH 의 명령으로 부른다. 긴 경로를 줄이려 지어낸 셸 변수가 zsh 에서 깨졌다."""
+    """`job.py` 는 bin/ 을 거쳐 PATH 의 명령으로 부른다. 긴 경로를 줄이려 지어낸 셸 변수가 zsh 에서 깨졌다."""
 
     def test_job_스킬은_PATH_의_job_py_를_부르고_못_찾을_때의_한_가지_모양을_둔다(self):
         text = read("skills/job/SKILL.md")
@@ -124,7 +107,7 @@ class ShortCallTextTest(unittest.TestCase):
         for rel in plugin_files():
             if not rel.endswith(".md"):
                 continue
-            for word in ("skills/job/job.py", "nonstop/nonstop.py", "이 스킬 폴더의 `job.py`", "이 스킬 폴더의 `nonstop.py`"):
+            for word in ("skills/job/job.py", "이 스킬 폴더의 `job.py`"):
                 if word in read(rel):
                     found.append("%s: %s" % (rel, word))
         self.assertEqual(found, [])
@@ -158,9 +141,8 @@ class ReportTextTest(unittest.TestCase):
         self.assertIn("기록 파일", body)
         self.assertNotIn("보고의 `job.py show` 출력", body)
 
-    def test_댓글이_실패해_파일에만_있는_기록도_nonstop_과_dispatch_가_찾는다(self):
+    def test_댓글이_실패해_파일에만_있는_기록도_dispatch_가_찾는다(self):
         self.assertIn("댓글이 실패하면", section(read("skills/dispatch/SKILL.md"), "4. 완료 판단"))
-        self.assertIn("댓글이 실패", section(read("skills/nonstop/SKILL.md"), "작업이 병합되면"))
 
     def test_hardener_는_PR_이나_기록_파일에서_기록을_읽는다(self):
         hardener = read("agents/hardener.md")

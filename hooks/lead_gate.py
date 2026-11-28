@@ -8,7 +8,7 @@
   세션)가 한다. 병합이 기록된 뒤에도 같다.
 - 병합된 워커의 워크트리를 리드의 대조와 hardener 기록 없이 지우는 것: `git worktree remove`, 워크트리나 그것을 담은
   폴더(레포 밖의 git 아닌 폴더는 두 단계 아래까지)의 `rm -r`, 워크트리의 기록이 든 git 관리 폴더(.git/worktrees/<이름>)의
-  `rm -r`. `$HOME`, 글롭, 중괄호도 펼쳐 본다. 지금 세션이 그 작업을 시작했고 dispatch 의 워커가 아니면(nonstop, 사용자가
+  `rm -r`. `$HOME`, 글롭, 중괄호도 펼쳐 본다. 지금 세션이 그 작업을 시작했고 dispatch 의 워커가 아니면(사용자가
   이 세션에서 맡긴 job) 막지 않는다. 병합되지 않은 작업(닫힌 PR)과 job 기록이 없는 워크트리도 막지 않는다.
   브랜치 지우기(git branch -D, git push --delete)는 보지 않는다. 워크트리에 체크아웃된 브랜치는 git 이 지우지 않고,
   워크트리를 지키면 리드가 볼 기록이 남기 때문이다.
@@ -184,7 +184,7 @@ def problem(command, cwd, transcript):
                     "리드가 남긴다. 지금 할 수 없으면 보고에 남겨 사람에게 넘긴다" % merge_gate.job_command(seg))
     for state, wt in wiped:
         if started_here(calls, wt) and not worker:
-            continue  # 이 세션이 시작한 작업의 정리(nonstop, 이 세션에서 맡긴 job)
+            continue  # 이 세션이 시작한 작업의 정리(이 세션에서 맡긴 job)
         left = [label for c, label in (("contrasted", "리드의 대조(`job.py contrasted \"<대조 결과>\"`)"),
                                        ("hardened", "hardener 결과(`job.py hardened \"<결과>\"`)")) if not state.get(c)]
         if left:

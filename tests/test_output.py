@@ -1,5 +1,5 @@
 """기록 명령은 무엇을 기록했는지 한두 줄만 찍는다. 기록 전체는 show, 빠진 것은 check 에서만 나온다.
-`job.py`, `nonstop.py` 는 플러그인의 bin/ 을 거쳐 경로 없이 부른다."""
+`job.py` 는 플러그인의 bin/ 을 거쳐 경로 없이 부른다."""
 import os
 import subprocess
 import sys
@@ -9,7 +9,6 @@ import unittest
 from helpers import ROOT, commit_and_switch, git_repo, job
 
 BIN = os.path.join(ROOT, "bin")
-NONSTOP = os.path.join(ROOT, "skills", "nonstop", "nonstop.py")
 WHOLE = ("## 작업 기록", "병합 전에 빠진 것", "상태:")  # show 의 머리, 빠진 것 목록, 상태 줄
 
 
@@ -155,7 +154,7 @@ class BinTest(unittest.TestCase):
         return subprocess.run(list(args), cwd=cwd, capture_output=True, text=True, env=env)
 
     def test_bin_의_입구는_git_이_실행_파일로_담는다(self):
-        for name in ("job.py", "nonstop.py"):
+        for name in ("job.py",):
             mode = subprocess.run(["git", "ls-files", "-s", "bin/" + name], cwd=ROOT, capture_output=True,
                                   text=True).stdout.split()
             self.assertEqual(mode[:1], ["100755"], name)
@@ -172,42 +171,6 @@ class BinTest(unittest.TestCase):
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("job.py show", r.stderr)  # 본체의 사용법이 나온다
 
-    def test_경로_없이_부른_nonstop_py_가_본체와_같은_목록을_쓴다(self):
-        home = tempfile.TemporaryDirectory()
-        self.addCleanup(home.cleanup)
-        env = dict(os.environ, HOME=home.name)
-        r = self.run_bin(home.name, "nonstop.py", "init", "s1", "첫 작업", env=env)
-        self.assertEqual(r.returncode, 0, r.stderr)
-        r = subprocess.run([sys.executable, NONSTOP, "show", "s1"], capture_output=True, text=True, env=env)
-        self.assertIn("1. 첫 작업", r.stdout)
-
-
-class NonstopOutputTest(unittest.TestCase):
-    def setUp(self):
-        self.home = tempfile.TemporaryDirectory()
-        self.addCleanup(self.home.cleanup)
-
-    def run_cmd(self, *args):
-        env = dict(os.environ, HOME=self.home.name)
-        return subprocess.run([sys.executable, NONSTOP, *args], capture_output=True, text=True, env=env)
-
-    def test_기록_명령은_보고_전체를_찍지_않고_무엇을_했는지와_다음_작업만_알린다(self):
-        for args, after in ((("init", "s1", "가", "나", "다"), "다음: 1. 가"), (("add", "s1", "라"), "다음: 1. 가"),
-                            (("set", "s1", "1", "done", "https://github.com/o/r/pull/3"), "다음: 2. 나"),
-                            (("decide", "s1", "2", "권장안으로 정함"), "다음: 2. 나")):
-            r = self.run_cmd(*args)
-            self.assertEqual(r.returncode, 0, (args, r.stderr))
-            self.assertLessEqual(len(r.stdout.splitlines()), 2, (args, r.stdout))
-            self.assertNotIn("## ", r.stdout, args)
-            self.assertNotIn("PR 1개", r.stdout, args)
-            self.assertIn(after, r.stdout, args)
-
-    def test_show_는_보고_전체를_찍는다(self):
-        self.run_cmd("init", "s1", "가")
-        self.run_cmd("set", "s1", "1", "done", "https://github.com/o/r/pull/3")
-        r = self.run_cmd("show", "s1")
-        self.assertIn("## 끝난 것", r.stdout)
-        self.assertIn("PR 1개", r.stdout)
 
 
 if __name__ == "__main__":
